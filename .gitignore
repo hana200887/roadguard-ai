@@ -1,0 +1,35 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Tooling caches and reports
+.pytest_cache/
+.pytest_tmp/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Generated data and model artifacts (scoped directories)
+data/raw/
+data/processed/
+data/generated/
+artifacts/
+mlruns/
+# Intentional documentation and small test fixtures inside data/ remain
+# committable (for example data/README.md).
+!data/README.md
+
+# Local configuration and credentials
+.env
+.env.*
+!.env.example
+local.yaml
+*.local.yaml
+
+# Build output
+dist/
+build/

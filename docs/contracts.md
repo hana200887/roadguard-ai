@@ -1,0 +1,379 @@
+# RoadGuard AI - System Contracts
+
+This document defines the cross-phase guarantees for RoadGuard AI. Phase 1
+implements the configuration (`src/roadguard/config.py`), the locked
+contract models (`src/roadguard/contracts.py`), the target-semantics helpers
+(`src/roadguard/targets.py`) and the risk-score helper
+(`src/roadguard/risk.py`); the data, model, and inference phases must
+implement the rest as specified here.
+
+## 0. Locked V1 profile
+
+The V1 production profile is fixed and enforced by `V1Contract`:
+
+- **300** road segments.
+- **48** monthly observations per segment.
+- **14,400** observations in total.
+- Chronological **70 / 15 / 15** train / validation / test split of the 48
+  unique observation dates, giving locked date counts **34 / 7 / 7**
+  (`train_date_count`, `validation_date_count`, `test_date_count`). The
+  largest-remainder allocation is:
+  - `48 * 0.70 = 33.6` -> floor 33
+  - `48 * 0.15 = 7.2` -> floor 7
+  - `48 * 0.15 = 7.2` -> floor 7
+  - floors sum to 47; the remaining date goes to the train partition, giving
+    **34 / 7 / 7** (and `34 + 7 + 7 = 48`).
+- **30**-day maintenance window (`maintenance_window_days`).
+- Risk bands locked to exactly **LOW 0-30, MEDIUM 31-60, HIGH 61-80,
+  CRITICAL 81-100** (inclusive, contiguous). Any other layout is rejected,
+  even one that is itself contiguous and covers 0-100.
+
+These values are **not configurable**. Production configuration (YAML or
+`ROADGUARD_*` environment variables) cannot change them: the keys are not
+fields of the runtime configuration and are rejected if supplied. Small
+dataset sizes used by unit tests or the generator must use the separate
+`DatasetSpec` model, which is never loaded as the production profile.
+
+## 1. Logical tables
+
+The schema maps to the later PostgreSQL tables:
+
+| Table                 | Purpose                                                      |
+| --------------------- | ------------------------------------------------------------ |
+| `road_segments`       | Static description of each road segment (one row per segment). |
+| `road_observations`   | Monthly observation per segment (one row per segment per month). |
+| `maintenance_history` | One row per maintenance event (realized events).             |
+| `predictions`         | Model outputs: maintenance probability, risk score and band per (segment, date). |
+| `material_forecasts`  | Network-month material quantity forecasts (derived, never features). |
+
+`segment_id` is a stable string business identifier such as
+`QL01-KM134-135`: road code `QL01` (national road) plus kilometre markers
+134-135. `province` is a **separate** attribute; a road code such as `QL01`
+is not a province. An integer surrogate key may exist internally for
+storage, but the public and business identifier is the string `segment_id`;
+arbitrary integer IDs are not used as public identifiers.
+
+## 2. Column dictionary
+
+Legend for the attribute columns:
+
+- **Known at observation**: value is available from the start-of-day
+  observation snapshot at time `t` (no future information).
+- **Class/Reg feature**: may be used as a classification / regression model
+  feature. `FORBIDDEN` means the column must never be a feature.
+- **Target/forecast**: the column is a learning target or a forecast output
+  rather than an input.
+
+### `road_segments` (static per segment; no time-varying values)
+
+| Column | Type | Unit | Raw nullability | Cleaned nullability | Range / categories | Provenance | Known at observation | Class feature | Reg feature | Target / forecast |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `segment_id` | str | - | not null | not null | business code e.g. `QL01-KM134-135`, unique, stable, non-empty | road inventory registry | yes (identity) | no (identifier; grouping key only) | no (identifier) | no |
+| `province` | str | - | not null | not null | province code from business registry (e.g. `NA`); a road code such as `QL01` is not a province | road inventory registry | yes | yes (categorical) | yes (encoded) | no |
+| `road_type` | str | - | not null | not null | category set: highway / national / provincial / urban / rural | road inventory registry | yes | yes (categorical) | yes (encoded) | no |
+| `construction_date` | date | - | not null | not null | <= first observation date | construction records | yes | yes | yes | no |
+| `road_length_km` | float | km | not null | not null | > 0 | road inventory registry | yes | yes | yes | no |
+
+### `road_observations` (one row per segment per month; time-varying values)
+
+| Column | Type | Unit | Raw nullability | Cleaned nullability | Range / categories | Provenance | Known at observation | Class feature | Reg feature | Target / forecast |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `segment_id` | str | - | not null | not null | same as `road_segments` | FK to `road_segments` | yes (identity) | no (identifier) | no (identifier) | no |
+| `date` | date | - | not null | not null | monthly cadence; unique per (segment, date) | observation calendar | yes (snapshot time) | no (time key) | no (time key) | no |
+| `traffic_volume` | int | vehicles / day | not null | not null | >= 0 | traffic surveys aggregated to month | yes | yes | yes | no |
+| `heavy_vehicle_ratio` | float | ratio | not null | not null | 0.0 - 1.0 | traffic surveys aggregated to month | yes | yes | yes | no |
+| `road_age_days` | int | days | derived | derived (not null) | >= 0 | derived per observation: `date - construction_date` | yes | yes | yes | no |
+| `rainfall_mm` | float | mm / month | nullable | not null (imputed) | >= 0 | weather records aggregated to month | yes | yes | yes | no |
+| `temperature` | float | degrees C (monthly mean) | nullable | not null (imputed) | -50 .. 60 | weather records | yes | yes | yes | no |
+| `humidity` | float | percent (monthly mean) | nullable | not null (imputed) | 0 .. 100 | weather records | yes | yes | yes | no |
+| `days_since_last_maintenance` | int | days | not null | not null | >= 0 (cap for never-maintained segments) | from `maintenance_history` events strictly before `date` | yes | yes | yes | no |
+| `previous_repairs` | int | count | not null | not null | >= 0 | count of `maintenance_history` events strictly before `date` | yes | yes | yes | no |
+| `road_condition_score` | int | score | not null | not null | 1 .. 100 (higher = better) | inspection survey at/before `t` | yes | yes | yes | no |
+| `marking_condition_score` | int | score | not null | not null | 1 .. 100 | inspection survey at/before `t` | yes | yes | yes | no |
+| `guardrail_condition_score` | int | score | not null | not null | 1 .. 100 | inspection survey at/before `t` | yes | yes | yes | no |
+| `sign_condition_score` | int | score | not null | not null | 1 .. 100 | inspection survey at/before `t` | yes | yes | yes | no |
+| `accident_count_30d` | int | count | not null | not null | >= 0, trailing 30 days | accident records | yes | yes | yes | no |
+| `accident_count_365d` | int | count | not null | not null | >= 0, trailing 365 days | accident records | yes | yes | yes | no |
+| `days_until_maintenance` | int | days | derived | derived (not null) | >= 0 | derived from `maintenance_history` | **no** (future) | no | no | **yes - regression target** |
+| `maintenance_within_30_days` | int | - | derived | derived (not null) | 0 or 1 | derived from `days_until_maintenance` | **no** (future) | no | no | **yes - classification target** |
+
+`road_age_days` is always derived per observation from
+`road_segments.construction_date`; it is never stored or generated as an
+independent value.
+
+### `maintenance_history` (one row per maintenance event)
+
+| Column | Type | Unit | Raw nullability | Cleaned nullability | Range / categories | Provenance | Known at observation | Class feature | Reg feature | Target / forecast |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `segment_id` | str | - | not null | not null | same as `road_segments` | FK to `road_segments` | no | no | no | no |
+| `maintenance_date` | date | - | not null | not null | any date | maintenance schedule/execution records | no | no | no | no (event key) |
+| `maintenance_cost` | int | VND | not null | not null | > 0 | realized cost recorded at/after execution (accounting) | **no** | **FORBIDDEN** | **FORBIDDEN** | no (optimization input) |
+| `thermoplastic_paint_kg` | float | kg | not null | not null | >= 0 | material consumption records at execution | no | **FORBIDDEN** | **FORBIDDEN** | no (forecast input) |
+| `reflective_sheet_m2` | float | m2 | not null | not null | >= 0 | material consumption records at execution | no | **FORBIDDEN** | **FORBIDDEN** | no (forecast input) |
+| `guardrail_meter` | float | m | not null | not null | >= 0 | material consumption records at execution | no | **FORBIDDEN** | **FORBIDDEN** | no (forecast input) |
+| `traffic_sign_quantity` | int | count | not null | not null | >= 0 | material consumption records at execution | no | **FORBIDDEN** | **FORBIDDEN** | no (forecast input) |
+
+**Material quantities** are actual historical consumption recorded from
+maintenance events. Individual quantities may be **zero**: not every
+maintenance action consumes every material, so no event is required to have
+all four quantities positive. Material quantities are **forbidden as
+classification and regression features**.
+
+**`maintenance_cost`** is an **integer amount in VND**, a **realized** cost
+recorded at or after the maintenance event (accounting provenance). It is
+not guaranteed to be known before a maintenance decision, so it is
+**excluded from the classification and regression feature allowlists**. It
+maps to the `cost_vnd` input of the later maintenance optimization.
+
+**Availability rule**: a `maintenance_history` row becomes historically
+available only **after** its event date. At observation snapshot `t`, only
+events with `maintenance_date < t` are available to features; events on or
+after `t` (including future events) are forbidden from features. An event on
+`t` itself is the *next* maintenance for that snapshot (see section 3).
+
+### `predictions` (model outputs)
+
+| Column | Type | Unit | Known at observation | Class feature | Reg feature | Target / forecast |
+| --- | --- | --- | --- | --- | --- | --- |
+| `segment_id` | str | - | yes | no | no | no |
+| `date` | date | - | yes | no | no | no |
+| `maintenance_probability` | float | probability | no (output) | no | no | yes (output) |
+| `risk_score` | int | score | no (output) | no | no | yes (output) |
+| `risk_band` | str | - | no (output) | no | no | yes (output) |
+
+### `material_forecasts` (forecast outputs, network-month level)
+
+| Column | Type | Unit | Known at observation | Class feature | Reg feature | Target / forecast |
+| --- | --- | --- | --- | --- | --- | --- |
+| `period` | date | - | yes | no | no | no |
+| `material` | str | - | yes | no | no | no |
+| `forecast_quantity` | float | kg / m2 / m / count | no (output) | no | no | yes (output) |
+
+For V1, material forecasting is defined at **network-month** level
+(`period`, `material`, `forecast_quantity`); `segment_id` is not required in
+`material_forecasts`. Segment-level forecasting is not supported in V1
+unless a separate forecast scope is explicitly documented. Forecast
+quantities are outputs derived from maintenance-event history; they are
+never used as features.
+
+## 3. Target semantics
+
+An observation is a **start-of-day snapshot**. `next_maintenance_date` is the
+first maintenance event **on or after** the observation date:
+
+```
+next_maintenance_date >= observation_date
+```
+
+Then:
+
+```
+days_until_maintenance = next_maintenance_date - observation_date
+```
+
+```
+maintenance_within_30_days =
+    1 when 0 <= days_until_maintenance <= 30
+    0 otherwise
+```
+
+Boundary behaviour (window 30): **0 days -> positive**, **30 days ->
+positive**, **31 days -> negative**. Because the next event is selected on or
+after the observation date, `days_until_maintenance` is never negative; a
+past event is rejected (`ValueError` from `days_until_maintenance()`).
+
+The helpers in `src/roadguard/targets.py` implement exactly this semantics
+and are covered by unit tests for the boundary values.
+
+Maintenance events are generated **first**; targets are derived from them
+and never generated independently. Events are generated **beyond the final
+observation date** so that the last observations are not mislabeled by right
+censoring: an observation whose next event falls beyond the final
+observation date still has a correctly computed `days_until_maintenance`.
+
+## 4. Time split policy
+
+Splits are chronological by unique observation dates with locked counts
+34 / 7 / 7 (largest-remainder allocation from 70 / 15 / 15 over 48 dates,
+section 0):
+
+| Split      | Date count | Composition                          |
+| ---------- | ---------- | ------------------------------------ |
+| train      | 34         | first 34 unique dates                |
+| validation | 7          | next 7 unique dates                  |
+| test       | 7          | final 7 unique dates                 |
+
+- Rows are never split randomly; the split boundary is defined by dates.
+- Imputers, encoders, scalers, and outlier statistics are fit on training
+  data only.
+- Validation (or time-aware cross-validation) is used for tuning and model
+  selection. The test set is evaluated exactly once on the frozen selected
+  model.
+
+## 5. Model selection contracts
+
+Candidate selection never reads the test partition.
+
+**Classification (maintenance_within_30_days)**
+- Candidate ranking: **primary = validation PR-AUC** (precision-recall area
+  under the curve).
+- Decision threshold: maximize **validation F1**; tie-break on **higher
+  validation recall**.
+- Reported metrics (frozen model on test, once): accuracy, precision,
+  recall, F1, ROC-AUC, and the confusion matrix.
+
+**Regression (days_until_maintenance)**
+- Candidate ranking: **primary = validation MAE**; tie-break on **lower
+  validation RMSE**.
+- Reported metrics (frozen model on test, once): MAE, RMSE, and R-squared.
+
+**Forecasting (material quantities)**
+- Forecasting uses a **separate rolling-origin timeline** and must **not**
+  reuse the supervised 34 / 7 / 7 evaluation as its forecasting protocol.
+
+## 6. Feature availability rules
+
+- At observation time `t`, every model feature must use only information
+  available at or before `t`. Features using future data are forbidden.
+- `maintenance_history` rows are available to features only strictly after
+  their event date (section 2); future maintenance rows are forbidden.
+- Rolling features are computed **per segment** and **shifted before
+  rolling**: `groupby(segment_id).shift(1).rolling(...)`. This prevents the
+  current row from leaking into its own window.
+- Material consumption is generated from maintenance events and is
+  **forbidden** as a feature (section 2).
+- `maintenance_cost` is a realized cost (section 2) and is **excluded** from
+  ML features.
+- `road_age_days` is derived from `construction_date`, never independently
+  generated.
+
+## 7. Artifact and inference contracts
+
+- Generated data and model artifacts live under `data/` and `artifacts_dir`
+  (runtime configuration) and are gitignored; only documentation (e.g.
+  `data/README.md`) and intentional small fixtures are committable there.
+- The inference pipeline loads models only from the managed artifact
+  registry (MLflow in later phases). A model path supplied by an API user is
+  never loaded.
+
+### Risk score contract
+
+```
+risk_score = Decimal(str(maintenance_probability)) * 100,
+             quantized to 1 with decimal ROUND_HALF_UP
+```
+
+- Deterministic **decimal ROUND_HALF_UP**: the probability is converted with
+  `Decimal(str(p))` (never from the raw binary float), so binary
+  floating-point representation cannot change `.5` behaviour. Python's
+  banker's `round()` is not used, and no binary `floor(p * 100 + 0.5)`
+  arithmetic is used.
+- The probability is validated to be finite and within [0, 1]; values
+  outside are rejected, not clamped, and booleans are rejected.
+- The result is clamped to 0-100 only for floating-point numerical safety.
+- Implemented once in `roadguard.risk.risk_score_from_probability`; every
+  consumer must use it.
+- Band classification uses the locked layout: LOW 0-30, MEDIUM 31-60, HIGH
+  61-80, CRITICAL 81-100 (`V1_RISK_BANDS`).
+- Model probabilities are only described as *calibrated* if calibration was
+  actually implemented and evaluated. No calibration is implemented yet.
+
+### Online inference contract
+
+Online inference input is minimal:
+
+```
+segment_id, as_of_date
+```
+
+The runtime must, for a given `(segment_id, as_of_date)`:
+
+- retrieve static segment attributes from PostgreSQL (`road_segments`);
+- retrieve historical observations **up to and including** `as_of_date` and
+  **exclude every observation after** `as_of_date`;
+- build engineered features internally;
+- **reject caller-supplied engineered feature vectors**;
+- **reject caller-supplied model paths**;
+- fail explicitly when the segment, its history, or required artifacts are
+  unavailable;
+- **never fill missing history with hard-coded defaults** (missing data is
+  an explicit failure).
+
+## 8. Reproducibility seed policy
+
+- A single master seed is set through runtime configuration (`seed`, default
+  42, validated positive, overridable via `ROADGUARD_SEED`).
+- Every random number consumer (data generation, model training, splitting
+  where applicable) must derive its stream deterministically from the master
+  seed so that a given configuration reproduces identical data and results.
+- The seed used for any generated dataset or trained artifact is recorded
+  alongside the artifact metadata.
+- Chronological splits depend on data, not on randomness; the seed governs
+  the synthetic event and noise generation, not the split policy.
+
+## 9. Generation methodology (Phase 2)
+
+Implemented in `roadguard.segments` and `roadguard.events`.
+
+**Observation calendar.** Monthly observations start at
+`V1_OBSERVATION_START` (2022-01-01); the V1 window is the 48 first-of-month
+dates from that start. `observation_dates(months, start)` reproduces the
+calendar.
+
+**Segment master.** `generate_segments(spec, seed)` produces the static
+`road_segments` columns plus latent simulation state:
+`traffic_base` (vehicles/day), `heavy_vehicle_ratio_base`, `weather_exposure`
+(mean-rainfall multiplier), `deterioration_rate` (condition decay per month),
+`accident_propensity`, `initial_condition` (1-100). Segment identifiers come
+from a fixed registry (`ROAD_CODES`, `PROVINCES`) and `road_length_km`
+equals the kilometre-marker span `end - start` of the business identifier;
+both are deterministic and stable across seeds. Construction dates precede
+the observation start by 5-30 years.
+
+**Accident history.** `generate_accident_timeline(segments, spec, seed)`
+produces deterministic monthly accident counts per segment (Poisson with
+rate `accident_propensity * (traffic_base / 10000)^0.5 * 0.05`) for every
+simulated month, reusable by later phases for accident features. The
+maintenance hazard at month `t` uses the trailing accident history of the
+12 months **strictly before** `t`; future accidents never influence hazard.
+
+**Maintenance events.** `generate_maintenance_events(segments, spec, seed)`
+simulates at most **one event per segment-month** via a Bernoulli draw with
+probability `monthly_hazard(master, month_date, months_since_last_event,
+condition, trailing_accidents, base_rate)`, the pure product of documented
+latent drivers:
+
+- base rate (`base_rate`, validated: not boolean, finite, positive);
+- asset age (hazard grows with age since `construction_date`);
+- traffic exposure (`(traffic_base / 10000)^0.2`);
+- heavy-vehicle exposure (`1 + (ratio - 0.25) * 2`);
+- weather exposure (`weather_exposure` with a calendar-month seasonal
+  cycle);
+- condition deterioration (a renewal proxy decaying by `deterioration_rate`
+  per month via `decay_condition`, jumping toward `initial_condition` after
+  each event; factor clamped 0.5-2.0x);
+- trailing accident history (factor `1 + 0.3 * min(trailing_12m, 5)`);
+- previous maintenance (renewal factor 0.3 / 0.6 / 1.0 for <6 / <12 /
+  >=12 months since the last event, applied from the month **after** an
+  event onward via the pure `month_transition` state helper).
+
+The hazard is clamped to [0.02, 0.9]. Event day offsets are uniform within
+the month; in the construction month, event days start at
+`construction_date`. Simulation never runs before `construction_date`;
+construction dates after the observation start are rejected. Months are
+always simulated through the future-buffer horizon `sim_end`, so a longer
+`future_buffer_months` extends the retained deterministic history and
+shorter-buffer histories are preserved as prefixes; if no event falls after
+the final observation date by `sim_end`, the same hazard and accident
+processes continue until the first such event, subject to the documented
+safety cap (`max_months_per_segment`, default 600) and an explicit
+`GenerationError` failure. Targets are not generated in this phase and never
+influence event generation.
+
+**Determinism and row-order independence.** Each segment draws randomness
+from its own stream `SeedSequence([seed, int.from_bytes(segment_id)])` (no
+Python `hash()`); child stream 0 is accidents, child stream 1 is maintenance
+events. The segment master uses `SeedSequence(seed)` child stream 0. Same
+seed => identical frames; different seeds change stochastic values (but not
+segment IDs or lengths); shuffling the segment table never changes the
+output frames.
