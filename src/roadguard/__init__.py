@@ -23,7 +23,12 @@ from roadguard.events import (
 from roadguard.observations import generate_observations
 from roadguard.risk import risk_score_from_probability
 from roadguard.segments import SegmentMaster, generate_segments
-from roadguard.targets import days_until_maintenance, maintenance_within_30_days
+from roadguard.targets import (
+    TARGET_COLUMNS,
+    days_until_maintenance,
+    derive_observation_targets,
+    maintenance_within_30_days,
+)
 
 __all__ = [
     "ConfigError",
@@ -34,10 +39,12 @@ __all__ = [
     "RiskBands",
     "RoadGuardConfig",
     "SegmentMaster",
+    "TARGET_COLUMNS",
     "V1Contract",
     "__version__",
     "days_until_maintenance",
     "decay_condition",
+    "derive_observation_targets",
     "generate_accident_timeline",
     "generate_maintenance_events",
     "generate_observations",

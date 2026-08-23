@@ -469,3 +469,45 @@ heavy-vehicle noise; rainfall, temperature, humidity noise; road, marking,
 guardrail, sign noise). No global NumPy state, no Python `hash()`, no Phase
 2 RNG objects, no `spawn()` from a Phase 2 stream; changing one segment
 never shifts another segment's stream.
+## 11. Supervised target derivation (Phase 4)
+
+Implemented in `roadguard.targets` (`derive_observation_targets`,
+`TARGET_COLUMNS`).
+
+**Purpose and separation.** Supervised labels are derived from the actual
+Phase 2 maintenance-event keys; targets are never generated independently
+and never influenced by random values (no seed, no RNG). The target frame
+(`segment_id`, `date`, `days_until_maintenance`,
+`maintenance_within_30_days`) is physically separate from the observation
+feature table, and it never contains observation features, static segment
+columns, cost, materials, or the internal `next_maintenance_date`
+derivation state. Future labels are forbidden model features.
+
+**Semantics.** For every observation snapshot at date `t`, the next
+maintenance event is the earliest event for the same segment with
+`maintenance_date >= t` (past events ignored):
+
+- `days_until_maintenance = next_maintenance_date - t`;
+- `maintenance_within_30_days = 1` when `0 <= days <= 30`, else 0.
+
+Exact boundaries: same-day event -> days 0, class 1; 30 days -> class 1;
+31 days -> class 0. The approved pure helpers
+`days_until_maintenance` / `maintenance_within_30_days` are reused; the
+derivation raises instead of reimplementing conflicting boundary rules.
+
+**Right censoring is an error.** If any observation has no next event the
+derivation raises a contextual `ValueError` naming the segment and
+observation date; rows are never dropped, zero-filled, clipped, or treated
+as negative class.
+
+**Guarantees.** One target row per observation row, sorted by `segment_id`
+and `date`; row-order invariant for both inputs; inputs never mutated;
+explicit dtypes (object str / datetime64[ns] naive / int64 / int64). Date
+values must be timezone-naive start-of-day (exactly midnight, including
+zero nanoseconds) — non-midnight datetimes are rejected, never truncated —
+and must be exactly representable as datetime64[ns]; duplicate required
+column labels and unsupported object values are rejected contextually. Only
+`segment_id` and `maintenance_date` are used from the event frame, so
+later cost/material columns cannot change targets. Derivation uses a
+per-segment sorted lookup (`searchsorted(side="left")`), never a Cartesian
+join.

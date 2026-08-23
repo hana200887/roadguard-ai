@@ -70,6 +70,18 @@ Phase 3 (observation-core synthetic generation) is implemented:
   from Phase 2 streams.
 - No targets, anomalies, material quantities, database or models yet;
   targets are never used during generation.
+
+Phase 4 (event-derived supervised targets) is implemented:
+
+- `roadguard.targets.derive_observation_targets`: derives
+  `days_until_maintenance` and `maintenance_within_30_days` from the actual
+  Phase 2 maintenance-event keys (first event on-or-after the snapshot;
+  exact 0/30/31-day boundaries; no RNG). Missing tail events raise a
+  contextual error instead of silent right censoring. Targets are returned
+  in a frame physically separate from observation features, never containing
+  cost, materials, static segment columns, or the internal
+  `next_maintenance_date` state; future labels are forbidden model features.
+- No models, validation, database, API or dashboard yet.
 - Test harness: `pytest` with `pytest-cov` (branch coverage, enforced
   `fail_under = 80`), `ruff`, and `mypy` (strict).
 
