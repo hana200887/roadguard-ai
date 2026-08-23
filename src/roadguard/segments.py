@@ -24,7 +24,7 @@ import pandas as pd
 
 from roadguard.contracts import V1_OBSERVATION_START, DatasetSpec
 
-SEGMENT_ID_PATTERN: Final[str] = r"^QL\d{2}-KM\d+-\d+$"
+SEGMENT_ID_PATTERN: Final[str] = r"^QL[0-9]{2}-KM[0-9]+-[0-9]+$"
 ROAD_CODES: Final[tuple[str, ...]] = ("QL01", "QL14", "QL19", "QL24", "QL27", "QL40")
 PROVINCES: Final[tuple[str, ...]] = ("NA", "TH", "QB", "DN", "GL", "LA")
 ROAD_TYPES: Final[tuple[str, ...]] = ("highway", "national", "provincial", "urban", "rural")
