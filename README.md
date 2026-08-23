@@ -52,13 +52,29 @@ Phase 2 (segment master and maintenance-event engine) is implemented:
 - Per-segment RNG streams (`SeedSequence([seed, segment_id])`), so segment
   table row order never changes the output; same seed reproduces identical
   frames.
-- No observations, targets, anomalies, material quantities, database or
-  models yet; targets are never used during event generation.
+
+Phase 3 (observation-core synthetic generation) is implemented:
+
+- `roadguard.observations.generate_observations`: the clean, complete
+  `road_observations` table (16 documented columns; 14,400 V1 rows) with
+  start-of-day snapshot semantics: as-of monthly traffic/weather aggregates,
+  exact `road_age_days`, maintenance history strictly before `t`
+  (`NEVER_MAINTAINED_DAYS_CAP = 3650` fallback), Phase 2 condition-replay
+  scores, and literal 30/365-day accident windows from deterministically
+  expanded monthly accident counts.
+- Clean-core boundary: no missingness, invalid values, outliers, cleaning
+  or imputation; no targets, cost, materials, anomaly flags, or engineered
+  features; in-memory DataFrames only.
+- Documented Phase 3 RNG namespaces (`SeedSequence([seed, segment_key,
+  OBSERVATION_RNG_NAMESPACE, stream])`), row-order independent and isolated
+  from Phase 2 streams.
+- No targets, anomalies, material quantities, database or models yet;
+  targets are never used during generation.
 - Test harness: `pytest` with `pytest-cov` (branch coverage, enforced
   `fail_under = 80`), `ruff`, and `mypy` (strict).
 
-Not yet implemented (future phases): synthetic data generation, database
-access, ML models, API, dashboard, and Docker services.
+Not yet implemented (future phases): target derivation, database access, ML
+models, API, dashboard, and Docker services.
 
 ## Quickstart
 

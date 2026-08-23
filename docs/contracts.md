@@ -371,9 +371,101 @@ safety cap (`max_months_per_segment`, default 600) and an explicit
 influence event generation.
 
 **Determinism and row-order independence.** Each segment draws randomness
-from its own stream `SeedSequence([seed, int.from_bytes(segment_id)])` (no
+from its own stream `SeedSequence([seed, int.from_bytes(segment_id.encode("ascii"), "big")])` (no
 Python `hash()`); child stream 0 is accidents, child stream 1 is maintenance
 events. The segment master uses `SeedSequence(seed)` child stream 0. Same
 seed => identical frames; different seeds change stochastic values (but not
 segment IDs or lengths); shuffling the segment table never changes the
 output frames.
+
+## 10. Observation generation methodology (Phase 3)
+
+Implemented in `roadguard.observations` (`generate_observations`). It builds
+the clean observation-core `road_observations` table: one start-of-day
+snapshot per (segment, month) with exactly the documented 16 columns, sorted
+by `segment_id` and `date`. Inputs are never mutated; rows are generated
+per segment and observation date in sorted order.
+
+**Clean-core boundary.** Phase 3 produces a complete valid causal source:
+no missing values, no invalid values, no injected outliers, no duplicates,
+no cleaning, no imputation. Missingness, invalid values, outliers and
+cleaning belong to later phases. No CSV/Parquet persistence and no target,
+cost, material, anomaly, or engineered-feature columns are produced.
+
+**As-of monthly traffic/weather.** Observation rows are labelled at
+month-start as-of dates `t`. Traffic and weather represent the most recently
+completed monthly aggregate available at the start of day `t` and are never
+realized values of the future interval `[t, next_month)`. Per the
+authoritative Phase 3 addendum, seasonality uses the as-of observation month
+`m` and the trend uses the zero-based observation index `k`. Formulas
+(named module constants, not configuration):
+
+- traffic: `base * (1 + 0.003k) * (1 + 0.08 sin(2π(m-1)/12)) * exp(N(-σ²/2, σ))`
+  with σ = 0.06, `np.rint` to a non-negative integer;
+- heavy vehicles: `clip(base + 0.02 sin(2π(m-2)/12) + N(0, 0.012), 0, 1)`
+  rounded to 4 decimals;
+- rainfall: `max(0, 140 * exposure * (1 + 0.65 sin(2π(m-5)/12)) * exp(N(-σ²/2, σ)))`
+  with σ = 0.22, 1 decimal;
+- temperature: `clip(27 + 4 sin(2π(m-1)/12) - 0.8(exposure - 1) + N(0, 0.8), -50, 60)`,
+  1 decimal;
+- humidity: `clip(60 + 0.075 rainfall + 7(exposure - 1) + N(0, 2), 0, 100)`,
+  1 decimal (humidity is positively dependent on rainfall by construction).
+
+**Road age and maintenance history.** `road_age_days = (t -
+construction_date).days` exactly. At snapshot `t`, `past_events` uses only
+events with `maintenance_date < t`; `previous_repairs = len(past_events)`
+and `days_since_last_maintenance = (t - latest past event).days`. With no
+known prior event the value is `min(road_age_days, NEVER_MAINTAINED_DAYS_CAP =
+3650)`; this means *no known event in simulated history*, not proof the
+asset was never maintained. An event on `t` is excluded at `t` and becomes
+historical only later.
+
+**Condition replay and scores.** The latent condition replays the approved
+Phase 2 `month_transition`/`decay_condition` chain from the pre-period
+exactly as Phase 2 does, capturing the pre-transition state for each
+observation month; an event on `t` cannot improve the score at `t` and its
+effect first appears at the following snapshot. The four scores share the
+latent condition (correlated) but use distinct documented modifiers and
+noise, so they are never identical copies:
+
+- road: `clip(rint(condition + N(0, 1.25)), 1, 100)`;
+- marking: `clip(rint(condition - 4 - 0.00015 traffic - 0.008 rain + N(0, 1.5)), 1, 100)`;
+- guardrail: `clip(rint(condition - 2 - 8 hgv - 2 log1p(accidents_365d) + N(0, 1.5)), 1, 100)`;
+- sign: `clip(rint(condition - 3 - 0.04 max(humidity - 60, 0) - 0.004 rain + N(0, 1.5)), 1, 100)`.
+
+**Exact accident windows.** Monthly counts from the Phase 2 timeline are
+deterministically expanded into dated occurrences (a supporting internal
+state, not a new V1 table): per (segment, year, month) bucket the RNG is
+`SeedSequence([seed, key, OBSERVATION_RNG_NAMESPACE, ACCIDENT_DAY_STREAM,
+year, month])`, offsets are drawn with replacement in `[0, days_in_month)`
+(or from `construction_date.day - 1` in the construction month), and the
+bucket's exact count is preserved. Windows are literal half-open intervals:
+
+```
+accident_count_30d  = count(t - 30d  <= accident_date < t)
+accident_count_365d = count(t - 365d <= accident_date < t)
+```
+
+Not one/twelve calendar months. Complete monthly coverage over the required
+history is validated; missing buckets raise an explicit error (never
+silently zero). Accident counts are validated exactly (booleans, strings,
+fractions and non-integral values rejected; integer-space preservation, no
+float conversion) and capped at `MAX_ACCIDENTS_PER_SEGMENT_MONTH = 10_000`
+before any expansion — the Decimal branch compares the exact Decimal against
+0 and the cap before any `int` conversion, so an over-cap value is never
+converted; every count validation error names the segment and month.
+Expansion only covers months from `floor_month(first_obs - 365 days)`
+through the final observation month: buckets strictly older than the
+365-day window floor cannot affect any observation and are not expanded
+(the boundary day `first_obs - 365 days` itself remains eligible), while the
+condition replay continues to use the full required pre-period timeline.
+
+**RNG namespaces.** Per segment: `SeedSequence([seed, key,
+OBSERVATION_RNG_NAMESPACE, STREAM])` with streams TRAFFIC_STREAM,
+WEATHER_STREAM, CONDITION_STREAM, plus the per-bucket ACCIDENT_DAY_STREAM
+above, where `key = int.from_bytes(segment_id.encode("ascii"), "big")`. Draws per
+observation date are consumed in the documented order (traffic noise,
+heavy-vehicle noise; rainfall, temperature, humidity noise; road, marking,
+guardrail, sign noise). No global NumPy state, no Python `hash()`, no Phase
+2 RNG objects, no `spawn()` from a Phase 2 stream; changing one segment
+never shifts another segment's stream.

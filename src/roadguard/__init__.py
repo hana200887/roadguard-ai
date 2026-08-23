@@ -20,6 +20,7 @@ from roadguard.events import (
     monthly_hazard,
     observation_dates,
 )
+from roadguard.observations import generate_observations
 from roadguard.risk import risk_score_from_probability
 from roadguard.segments import SegmentMaster, generate_segments
 from roadguard.targets import days_until_maintenance, maintenance_within_30_days
@@ -39,6 +40,7 @@ __all__ = [
     "decay_condition",
     "generate_accident_timeline",
     "generate_maintenance_events",
+    "generate_observations",
     "generate_segments",
     "load_config",
     "maintenance_within_30_days",

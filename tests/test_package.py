@@ -26,6 +26,7 @@ def test_public_api_surface() -> None:
         "decay_condition",
         "generate_accident_timeline",
         "generate_maintenance_events",
+        "generate_observations",
         "generate_segments",
         "load_config",
         "maintenance_within_30_days",
