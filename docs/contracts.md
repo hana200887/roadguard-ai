@@ -34,24 +34,26 @@ fields of the runtime configuration and are rejected if supplied. Small
 dataset sizes used by unit tests or the generator must use the separate
 `DatasetSpec` model, which is never loaded as the production profile.
 
-## 1. Logical tables
+## 1. Logical and physical tables
 
-The schema maps to the later PostgreSQL tables:
+The logical data contract maps one-to-one to the fixed Phase 6 PostgreSQL
+tables. There are no hidden storage-only tables in V1:
 
 | Table                 | Purpose                                                      |
 | --------------------- | ------------------------------------------------------------ |
 | `road_segments`       | Static description of each road segment (one row per segment). |
 | `road_observations`   | Monthly observation per segment (one row per segment per month). |
-| `maintenance_history` | One row per maintenance event (realized events).             |
+| `maintenance_events`  | Key-only maintenance-event timeline, including planned future events used to derive targets. |
+| `observation_targets` | Event-derived targets per observation; physically and logically separate from model features. |
+| `maintenance_history` | Fully realized cost and material facts for a subset of executed maintenance events. |
 | `predictions`         | Model outputs: maintenance probability, risk score and band per (segment, date). |
 | `material_forecasts`  | Network-month material quantity forecasts (derived, never features). |
 
 `segment_id` is a stable string business identifier such as
 `QL01-KM134-135`: road code `QL01` (national road) plus kilometre markers
 134-135. `province` is a **separate** attribute; a road code such as `QL01`
-is not a province. An integer surrogate key may exist internally for
-storage, but the public and business identifier is the string `segment_id`;
-arbitrary integer IDs are not used as public identifiers.
+is not a province. The V1 logical and physical contract uses the string
+`segment_id` as its sole segment key: surrogate integer IDs are forbidden.
 
 ## 2. Column dictionary
 
@@ -86,22 +88,29 @@ Legend for the attribute columns:
 | `rainfall_mm` | float | mm / month | nullable | not null (imputed) | >= 0 | weather records aggregated to month | yes | yes | yes | no |
 | `temperature` | float | degrees C (monthly mean) | nullable | not null (imputed) | -50 .. 60 | weather records | yes | yes | yes | no |
 | `humidity` | float | percent (monthly mean) | nullable | not null (imputed) | 0 .. 100 | weather records | yes | yes | yes | no |
-| `days_since_last_maintenance` | int | days | not null | not null | >= 0 (cap for never-maintained segments) | from `maintenance_history` events strictly before `date` | yes | yes | yes | no |
-| `previous_repairs` | int | count | not null | not null | >= 0 | count of `maintenance_history` events strictly before `date` | yes | yes | yes | no |
+| `days_since_last_maintenance` | int | days | not null | not null | >= 0 (cap for never-maintained segments) | from `maintenance_events` strictly before `date` | yes | yes | yes | no |
+| `previous_repairs` | int | count | not null | not null | >= 0 | count of `maintenance_events` strictly before `date` | yes | yes | yes | no |
 | `road_condition_score` | int | score | not null | not null | 1 .. 100 (higher = better) | inspection survey at/before `t` | yes | yes | yes | no |
 | `marking_condition_score` | int | score | not null | not null | 1 .. 100 | inspection survey at/before `t` | yes | yes | yes | no |
 | `guardrail_condition_score` | int | score | not null | not null | 1 .. 100 | inspection survey at/before `t` | yes | yes | yes | no |
 | `sign_condition_score` | int | score | not null | not null | 1 .. 100 | inspection survey at/before `t` | yes | yes | yes | no |
 | `accident_count_30d` | int | count | not null | not null | >= 0, trailing 30 days | accident records | yes | yes | yes | no |
 | `accident_count_365d` | int | count | not null | not null | >= 0, trailing 365 days | accident records | yes | yes | yes | no |
-| `days_until_maintenance` | int | days | derived | derived (not null) | >= 0 | derived from `maintenance_history` | **no** (future) | no | no | **yes - regression target** |
-| `maintenance_within_30_days` | int | - | derived | derived (not null) | 0 or 1 | derived from `days_until_maintenance` | **no** (future) | no | no | **yes - classification target** |
 
 `road_age_days` is always derived per observation from
 `road_segments.construction_date`; it is never stored or generated as an
 independent value.
 
-### `maintenance_history` (one row per maintenance event)
+### `observation_targets` (one event-derived label row per observation)
+
+| Column | Type | Unit | Raw nullability | Cleaned nullability | Range / categories | Provenance | Known at observation | Class feature | Reg feature | Target / forecast |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `segment_id` | str | - | not null | not null | same as `road_segments` | FK to `road_segments` | yes (identity) | no | no | no |
+| `date` | date | - | not null | not null | same as `road_observations` | FK to matching observation | yes (snapshot time) | no | no | no |
+| `days_until_maintenance` | int | days | derived | derived (not null) | >= 0 | first `maintenance_events` key on or after the observation date | **no** (future) | no | no | **yes - regression target** |
+| `maintenance_within_30_days` | int | - | derived | derived (not null) | 0 or 1 | derived from `days_until_maintenance` | **no** (future) | no | no | **yes - classification target** |
+
+### `maintenance_history` (zero or one realized accounting row per event)
 
 | Column | Type | Unit | Raw nullability | Cleaned nullability | Range / categories | Provenance | Known at observation | Class feature | Reg feature | Target / forecast |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -125,11 +134,13 @@ not guaranteed to be known before a maintenance decision, so it is
 **excluded from the classification and regression feature allowlists**. It
 maps to the `cost_vnd` input of the later maintenance optimization.
 
-**Availability rule**: a `maintenance_history` row becomes historically
-available only **after** its event date. At observation snapshot `t`, only
-events with `maintenance_date < t` are available to features; events on or
-after `t` (including future events) are forbidden from features. An event on
-`t` itself is the *next* maintenance for that snapshot (see section 3).
+**Availability rule**: maintenance occurrence comes exclusively from
+`maintenance_events`. At observation snapshot `t`, only event keys with
+`maintenance_date < t` are available to features; events on or after `t`
+(including future events) are forbidden. An event on `t` itself is the *next*
+maintenance for that snapshot (see section 3). `maintenance_history` is
+realized accounting/material provenance only and is never a model-feature
+source.
 
 ### `predictions` (model outputs)
 
@@ -235,8 +246,9 @@ Candidate selection never reads the test partition.
 
 - At observation time `t`, every model feature must use only information
   available at or before `t`. Features using future data are forbidden.
-- `maintenance_history` rows are available to features only strictly after
-  their event date (section 2); future maintenance rows are forbidden.
+- Maintenance occurrence is available only from `maintenance_events` strictly
+  before the observation date; future event keys are forbidden. Realized
+  `maintenance_history`, costs, and materials are never ML features.
 - Rolling features are computed **per segment** and **shifted before
   rolling**: `groupby(segment_id).shift(1).rolling(...)`. This prevents the
   current row from leaking into its own window.
@@ -664,3 +676,47 @@ When tables already exist, their exact table set, column order/types/nullability
 primary and foreign keys, named check constraints, and indexes are verified
 before use. Partial, extra, or incompatible objects fail safely; the
 initializer does not repair or delete them implicitly.
+
+## 14. Point-in-time feature registry and generation (Phase 7)
+
+Phase 7 creates the deterministic offline feature frame for later modelling.
+It accepts only a complete `RepositoryExport` from the Phase 6 read boundary
+and its explicit `DatasetSpec`; it deep-copies and re-runs complete cleaned
+validation before feature generation. A prior validation report or an
+equivalent-looking collection of frames is not a bypass token.
+
+**Scope boundary.** Phase 7 joins validated public segment attributes to
+validated observation rows and produces a registry-defined frame only. It
+does not write a database table, derive a lag or rolling feature, split rows,
+impute, encode categoricals, scale, select/evaluate a model, train, serve an
+API, or include a target, event key, cost, material fact, anomaly field, or
+latent simulation value in its output.
+
+**Feature frame.** The output is canonically sorted by (`segment_id`, `date`)
+and has these two key columns, which are never model features:
+
+```
+segment_id, date
+```
+
+The frozen V1 Phase 7 registry contains exactly these model-feature columns:
+
+```
+province, road_type, construction_date, road_length_km,
+traffic_volume, heavy_vehicle_ratio, road_age_days,
+rainfall_mm, temperature, humidity,
+days_since_last_maintenance, previous_repairs,
+road_condition_score, marking_condition_score,
+guardrail_condition_score, sign_condition_score,
+accident_count_30d, accident_count_365d
+```
+
+`province` and `road_type` remain raw categorical values and
+`construction_date` remains a raw datetime in this phase. Their train-only
+encoding/transformation belongs to Phase 8. The registry's feature eligibility
+does not authorize an unlisted engineered feature.
+
+**Provenance and determinism.** Targets and maintenance-event keys are read
+solely to revalidate the exported source boundary; they never influence any
+output value. The generator never mutates caller-owned frames and produces the
+same canonical frame and dtypes for equivalent shuffled input frames.
