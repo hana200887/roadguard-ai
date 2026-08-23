@@ -596,3 +596,71 @@ preprocessing must be fitted on training data only in a later phase.
 exactly `OBSERVATION_COLUMNS` sorted by `segment_id`/`date`, the unchanged
 target frame, the unchanged maintenance-event frame, and the cleaned
 validation report.
+
+## 13. Transactional PostgreSQL persistence (Phase 6)
+
+Phase 6 is limited to the physical PostgreSQL boundary between validated
+Phase 5 data and later analytical phases. It does not engineer features,
+split or scale data, train models, serve an API, or introduce a Docker
+deployment.
+
+**Fixed schema and keys.** A PostgreSQL schema named `roadguard` owns exactly
+seven tables. All tables use their domain keys; no surrogate `id` is added:
+
+- `road_segments`: primary key `segment_id`, with exactly the five public
+  segment columns;
+- `road_observations`: primary key (`segment_id`, `date`), with exactly
+  `OBSERVATION_COLUMNS` and a foreign key to `road_segments`;
+- `maintenance_events`: primary key (`segment_id`, `maintenance_date`), the
+  key-only event timeline produced by earlier phases;
+- `observation_targets`: primary key (`segment_id`, `date`), foreign key to
+  the matching observation, with exactly `TARGET_COLUMNS`;
+- `maintenance_history`: primary key (`segment_id`, `maintenance_date`) and
+  foreign key to the matching event; cost and all four material fields are
+  non-null realized facts;
+- `predictions`: schema reserved for later prediction outputs, keyed by
+  (`segment_id`, `date`);
+- `material_forecasts`: schema reserved for later forecast outputs, keyed by
+  (`period`, `material`).
+
+The event and maintenance-history tables are deliberately separate. Earlier
+phases know event keys but do not generate cost or material usage. Phase 6
+therefore never invents those values; a maintenance-history row is accepted
+only when every realized field is supplied.
+
+**Configuration and initialization.** `database_url` is optional runtime
+configuration, exposed as `ROADGUARD_DATABASE_URL` and held as a masked
+`SecretStr`. Persistence requires the exact synchronous
+`postgresql+psycopg` driver. Schema initialization is repeatable. Public
+configuration and database errors do not echo credentials or SQL parameter
+values.
+
+**Transactional ETL.** `load_cleaning_result` accepts only a validated
+`CleaningResult` plus its explicit `DatasetSpec`. It deep-copies and reruns the
+complete cleaned Phase 5 validation on those exact frames immediately before
+normalization, so a stale or forged report cannot authorize invalid labels.
+It does not mutate caller-owned frames. Segments, observations, events,
+targets, and optional realized history are written in one transaction. Every
+table uses PostgreSQL conflict-safe insert-or-verify reconciliation: a missing
+key is inserted, an identical persisted or concurrent row is counted as
+existing, and a different row under the same key raises a conflict. Every
+realized-history key must belong to the current validated event batch. Any
+constraint or connection failure rolls back the whole load. PostgreSQL also
+enforces the one-event-per-segment-calendar-month invariant.
+
+**Read semantics.** Exports are ordered by natural key and preserve canonical
+column order and dtypes; observations and targets are returned in separate
+frames. A point-in-time segment query accepts a validated business identifier
+and a date, returning observations at or before that date and maintenance
+events strictly before it. Monthly material aggregation reads only complete,
+realized `maintenance_history` rows. All caller values are passed through
+bound SQLAlchemy expressions rather than interpolated SQL.
+Multi-query exports and histories execute in one read-only `REPEATABLE READ`
+transaction so concurrent commits cannot mix physical snapshots. A known
+segment with no observation at or before the requested date fails explicitly.
+
+**Schema drift.** Initialization creates the schema only when it is empty.
+When tables already exist, their exact table set, column order/types/nullability,
+primary and foreign keys, named check constraints, and indexes are verified
+before use. Partial, extra, or incompatible objects fail safely; the
+initializer does not repair or delete them implicitly.

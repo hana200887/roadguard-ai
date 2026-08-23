@@ -68,7 +68,7 @@ Phase 3 (observation-core synthetic generation) is implemented:
 - Documented Phase 3 RNG namespaces (`SeedSequence([seed, segment_key,
   OBSERVATION_RNG_NAMESPACE, stream])`), row-order independent and isolated
   from Phase 2 streams.
-- No targets, anomalies, material quantities, database or models yet;
+- No targets, anomalies, material quantities or models yet;
   targets are never used during generation.
 
 Phase 4 (event-derived supervised targets) is implemented:
@@ -81,7 +81,7 @@ Phase 4 (event-derived supervised targets) is implemented:
   in a frame physically separate from observation features, never containing
   cost, materials, static segment columns, or the internal
   `next_maintenance_date` state; future labels are forbidden model features.
-- No models, database, API or dashboard yet.
+- No models, API or dashboard yet.
 
 Phase 5 (raw-data corruption, validation and safe cleaning) is implemented:
 
@@ -104,8 +104,31 @@ Phase 5 (raw-data corruption, validation and safe cleaning) is implemented:
 - Test harness: `pytest` with `pytest-cov` (branch coverage, enforced
   `fail_under = 80`), `ruff`, and `mypy` (strict).
 
-Not yet implemented (future phases): target derivation, database access, ML
-models, API, dashboard, and Docker services.
+Phase 6 (transactional PostgreSQL persistence) is implemented:
+
+- A fixed `roadguard` schema with seven natural-key tables:
+  `road_segments`, `road_observations`, `maintenance_events`,
+  `observation_targets`, `maintenance_history`, `predictions`, and
+  `material_forecasts`. Observation features and future-derived targets
+  remain physically separate.
+- `load_cleaning_result` deep-copies and freshly revalidates a Phase 5 result
+  against an explicit `DatasetSpec`, then persists it in one transaction.
+  Replays are insert-or-verify: identical and concurrent rows are idempotent,
+  while a different row under the same natural key fails and rolls back the
+  entire load. Realized cost/material rows are optional but, when supplied,
+  must be complete; values are never fabricated from key-only events.
+- `PostgresRepository` provides deterministic physical exports, point-in-time
+  segment history (observations through `t`, maintenance events strictly
+  before `t`), and monthly material aggregation from realized maintenance
+  history only. Queries are built with bound SQLAlchemy expressions.
+- Multi-query reads run as read-only `REPEATABLE READ` snapshots. Schema
+  initialization verifies all seven existing tables and fails on drift rather
+  than silently accepting a partial or incompatible schema.
+- Phase 6 requires PostgreSQL with the synchronous `psycopg` driver. The URL
+  is runtime-only, optional in configuration, and stored as a masked secret.
+
+Not yet implemented (future phases): feature engineering, chronological
+splitting/scaling, ML models, API, dashboard, and Docker services.
 
 ## Quickstart
 
@@ -118,8 +141,9 @@ uv run mypy src
 
 ## Configuration
 
-Only runtime settings are configurable: `env`, `seed`, `data_dir`, and
-`artifacts_dir`. The V1 data/ML contract is locked and cannot be overridden.
+Only runtime settings are configurable: `env`, `seed`, `data_dir`,
+`artifacts_dir`, and the optional masked `database_url`. The V1 data/ML
+contract is locked and cannot be overridden.
 
 Configuration is resolved in this order (later wins):
 

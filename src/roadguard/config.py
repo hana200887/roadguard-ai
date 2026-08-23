@@ -7,7 +7,8 @@ Configuration is resolved with the following precedence (later wins):
    ``ROADGUARD_CONFIG_PATH`` environment variable.
 3. Environment variables named ``ROADGUARD_<FIELD>``.
 
-Only runtime settings (environment, seed, data directories) are tunable.
+Only runtime settings (environment, seed, data directories and an optional
+credential-bearing PostgreSQL URL) are tunable.
 The V1 data and ML contract is locked by :class:`roadguard.contracts.V1Contract`
 and cannot be changed through YAML or environment variables: keys or
 variables that attempt it are rejected. Unknown ``ROADGUARD_*`` environment
@@ -22,7 +23,7 @@ from pathlib import Path
 from typing import Any, Final, Literal
 
 import yaml
-from pydantic import BaseModel, ConfigDict, field_validator
+from pydantic import BaseModel, ConfigDict, SecretStr, field_validator
 
 from roadguard.contracts import NonBooleanInt, V1Contract
 
@@ -38,7 +39,8 @@ class RoadGuardConfig(BaseModel):
     """Validated runtime configuration.
 
     The locked V1 contract is exposed through the ``contract`` property and
-    is not configurable here; only runtime settings can be tuned.
+    is not configurable here; only runtime settings can be tuned. Database
+    credentials are held in :class:`pydantic.SecretStr` and masked in reprs.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -47,6 +49,7 @@ class RoadGuardConfig(BaseModel):
     seed: NonBooleanInt = 42
     data_dir: Path = Path("data")
     artifacts_dir: Path = Path("artifacts")
+    database_url: SecretStr | None = None
 
     @field_validator("seed")
     @classmethod
