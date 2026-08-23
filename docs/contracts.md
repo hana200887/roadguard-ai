@@ -511,3 +511,88 @@ column labels and unsupported object values are rejected contextually. Only
 later cost/material columns cannot change targets. Derivation uses a
 per-segment sorted lookup (`searchsorted(side="left")`), never a Cartesian
 join.
+
+## 12. Raw-data corruption, validation and safe cleaning (Phase 5)
+
+Implemented in `roadguard.data_quality`.
+
+**Clean-core versus corrupted-raw boundary.** Phase 3 emits a clean causal
+observation core and is never modified to emit dirty data. Phase 5 builds a
+separate deterministic raw representation and structurally cleans it back to
+a valid core. The public cleaned boundary contains exactly five segment
+columns (`segment_id`, `province`, `road_type`, `construction_date`,
+`road_length_km`); the latent simulation fields (`traffic_base`,
+`heavy_vehicle_ratio_base`, `weather_exposure`, `deterioration_rate`,
+`accident_propensity`, `initial_condition`) never cross it. Observations,
+targets, segments and maintenance events stay physically separate; targets
+never enter the observation frame.
+
+**Corruption allowlists and manifest.** `inject_observation_corruption`
+touches observation features only: missing values only in
+`rainfall_mm`/`temperature`/`humidity` (never the first chronological
+observation of a segment), domain-valid outliers only in
+`traffic_volume`/`rainfall_mm` (multiplied by the documented
+`outlier_multiplier`, default 8), and duplicates as exact copied rows (never
+manufactured conflicting keys). Keys, dates, road age and all
+target/future-event values are never corrupted. Every changed cell and
+duplicated row is recorded in a deterministic `CorruptionManifest` (no full
+row dumps). Rates default to `missing_rate = 0.02`,
+`outlier_rate = 0.005`, `duplicate_rate = 0.002` and reject booleans,
+strings, non-finite or negative values and rates above
+`MAX_CORRUPTION_RATE = 0.25`; outlier arithmetic rejects overflow or
+non-finite derived values before dtype conversion.
+
+**RNG namespace and determinism.** Per-row streams
+`SeedSequence([seed, segment_key, CORRUPTION_RNG_NAMESPACE, entropy])` (no
+Python `hash()`, no global NumPy state). The entropy component is the day
+offset from 1970-01-01 for dates on or after the epoch (existing historical
+streams are preserved), and a disjoint non-negative pre-epoch namespace
+(`2**62 + |offset|`) for earlier dates, so equal-distance pre- and
+post-epoch dates can never share an entropy component. Same seed and data
+produce identical corrupted output and manifest; different seeds change
+affected keys; shuffled input rows produce identical canonical output; both
+output and manifest are sorted deterministically; inputs are never mutated.
+
+**Maintenance-event invariants.** Validation enforces the locked Phase 2
+event contract with deterministic issue codes:
+
+- `event_before_construction`: a maintenance date strictly before the
+  segment's `construction_date` (events on the construction date itself are
+  allowed);
+- `event_month_conflict`: more than one event for the same segment and
+  calendar month, even when the dates differ;
+- `duplicate_key`: an exact duplicate `(segment_id, maintenance_date)` key.
+
+All three are errors reported by both `validate_raw_dataset` and
+`validate_cleaned_dataset`; `clean_raw_dataset` rejects such datasets.
+
+**Validation severity rules.** `validate_raw_dataset` warns on permitted
+weather missingness, fixed operational outlier thresholds
+(`TRAFFIC_VOLUME_OUTLIER_MAX = 100_000`, `RAINFALL_OUTLIER_MAX = 1_000`)
+and exact duplicate observation rows; it errors on missing keys, invalid
+domains, non-finite values, bad foreign keys, conflicting keys, malformed
+schemas/dtypes/dates/IDs, grid/cadence violations, cross-field violations
+(`construction_date <= date`; `road_age_days == date - construction_date`;
+`0 <= days_since_last_maintenance <= road_age_days`;
+`0 <= heavy_vehicle_ratio <= 1`; weather ranges; integer condition scores in
+[1, 100]; `0 <= accident_count_30d <= accident_count_365d`) and target
+mismatches, including recomputing targets from the actual maintenance-event
+keys (`target_event_inconsistency`). `validate_cleaned_dataset` escalates
+remaining missing values and duplicate keys to errors. Reports carry exact,
+deterministic issue counts and locations.
+
+**Causal forward-fill policy.** Cleaning fills permitted weather
+missingness using only the most recent strictly earlier non-missing value
+from the same segment: group by segment, sort by date, forward-fill only,
+never backward-fill, never another segment, never a global median/mean/mode;
+a segment with no earlier valid value fails contextually. Exact duplicate
+rows are removed; conflicting rows sharing an observation key are errors.
+Domain-valid outliers are preserved and reported as warnings; clipping,
+winsorizing or learned thresholds are not applied in Phase 5 — statistical
+preprocessing must be fitted on training data only in a later phase.
+
+**Frames and dtypes.** Cleaning returns public segments (5 columns,
+`construction_date` normalized to datetime64[ns]), cleaned observations with
+exactly `OBSERVATION_COLUMNS` sorted by `segment_id`/`date`, the unchanged
+target frame, the unchanged maintenance-event frame, and the cleaned
+validation report.

@@ -81,7 +81,26 @@ Phase 4 (event-derived supervised targets) is implemented:
   in a frame physically separate from observation features, never containing
   cost, materials, static segment columns, or the internal
   `next_maintenance_date` state; future labels are forbidden model features.
-- No models, validation, database, API or dashboard yet.
+- No models, database, API or dashboard yet.
+
+Phase 5 (raw-data corruption, validation and safe cleaning) is implemented:
+
+- `roadguard.data_quality.inject_observation_corruption`: deterministic
+  corrupted-raw representation with controlled missing values (weather
+  columns only), domain-valid outliers (`traffic_volume`, `rainfall_mm`) and
+  exact duplicate rows, with an exact `CorruptionManifest` and a documented
+  Phase 5 RNG namespace (row-order invariant, seed-controlled).
+- `validate_raw_dataset` / `validate_cleaned_dataset`: staged schema, dtype,
+  key, domain, cadence, cross-field and target/event validation producing a
+  deterministic `ValidationReport` (severity, code, table, column, row key).
+- `clean_raw_dataset`: removes exact duplicate rows, rejects conflicting
+  keys, forward-fills permitted weather missingness from the same segment's
+  strictly earlier values only (no global statistics), preserves outliers,
+  and returns public frames (segments without latent simulation columns).
+- Targets and maintenance events never enter the observation frame; latent
+  segment fields never cross the cleaned boundary.
+- No feature engineering, splitting, scaling, statistical imputation or
+  models yet.
 - Test harness: `pytest` with `pytest-cov` (branch coverage, enforced
   `fail_under = 80`), `ruff`, and `mypy` (strict).
 
