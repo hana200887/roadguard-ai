@@ -9,6 +9,7 @@ import pandas as pd
 import pytest
 from pandas.testing import assert_frame_equal
 
+import roadguard
 from roadguard import (
     DatasetSpec,
     RepositoryExport,
@@ -24,6 +25,7 @@ from roadguard.features import (
     FEATURE_FRAME_COLUMNS,
     FEATURE_KEY_COLUMNS,
     FEATURE_REGISTRY,
+    FeatureInputError,
     build_feature_frame,
 )
 
@@ -71,6 +73,14 @@ def test_registry_has_exact_source_feature_order() -> None:
         "accident_count_30d",
         "accident_count_365d",
     )
+    assert all(definition.source_columns == (definition.name,) for definition in FEATURE_REGISTRY)
+    assert all(definition.classification_allowed for definition in FEATURE_REGISTRY)
+    assert all(definition.regression_allowed for definition in FEATURE_REGISTRY)
+
+
+def test_feature_builder_is_publicly_exported() -> None:
+    assert roadguard.build_feature_frame is build_feature_frame
+    assert roadguard.FEATURE_REGISTRY is FEATURE_REGISTRY
 
 
 def test_build_feature_frame_has_exact_target_free_schema(dataset: RepositoryExport) -> None:
@@ -98,9 +108,9 @@ def test_build_feature_frame_is_canonical_and_does_not_mutate_inputs(
         segments=dataset.segments.sample(frac=1.0, random_state=3).reset_index(drop=True),
         observations=dataset.observations.sample(frac=1.0, random_state=7).reset_index(drop=True),
         targets=dataset.targets.sample(frac=1.0, random_state=11).reset_index(drop=True),
-        maintenance_events=dataset.maintenance_events.sample(
-            frac=1.0, random_state=13
-        ).reset_index(drop=True),
+        maintenance_events=dataset.maintenance_events.sample(frac=1.0, random_state=13).reset_index(
+            drop=True
+        ),
     )
 
     expected = build_feature_frame(dataset, SPEC)
@@ -111,14 +121,22 @@ def test_build_feature_frame_is_canonical_and_does_not_mutate_inputs(
     assert_frame_equal(dataset.observations, before_observations)
 
 
-def test_valid_future_event_cannot_change_feature_values(dataset: RepositoryExport) -> None:
-    extra = dataset.maintenance_events.iloc[[-1]].copy()
-    extra["maintenance_date"] = (
-        dataset.maintenance_events["maintenance_date"].max() + pd.DateOffset(years=1)
-    )
+def test_valid_future_event_and_rederived_targets_cannot_change_feature_values(
+    dataset: RepositoryExport,
+) -> None:
+    last_observation_date = dataset.observations["date"].max()
+    future = dataset.maintenance_events[
+        dataset.maintenance_events["maintenance_date"] > last_observation_date
+    ]
+    assert not future.empty
+    changed_events = dataset.maintenance_events.copy()
+    event_index = future.index[0]
+    changed_events.loc[event_index, "maintenance_date"] = pd.Timestamp("2099-01-15")
+    changed_targets = derive_observation_targets(dataset.observations, changed_events)
     changed = replace(
         dataset,
-        maintenance_events=pd.concat([dataset.maintenance_events, extra], ignore_index=True),
+        targets=changed_targets,
+        maintenance_events=changed_events,
     )
 
     assert_frame_equal(build_feature_frame(changed, SPEC), build_feature_frame(dataset, SPEC))
@@ -133,6 +151,56 @@ def test_build_feature_frame_revalidates_forged_export(dataset: RepositoryExport
         build_feature_frame(forged, SPEC)
 
 
+def test_build_feature_frame_rejects_target_encoded_maintenance_feature(
+    dataset: RepositoryExport,
+) -> None:
+    observations = dataset.observations.copy()
+    observations["previous_repairs"] = dataset.targets["maintenance_within_30_days"].astype("int64")
+    forged = replace(dataset, observations=observations)
+
+    with pytest.raises(FeatureInputError, match="previous_repairs"):
+        build_feature_frame(forged, SPEC)
+
+
+def test_build_feature_frame_normalizes_phase6_datetime_output(dataset: RepositoryExport) -> None:
+    segments = dataset.segments.copy()
+    segments["construction_date"] = pd.Series(
+        segments["construction_date"].dt.date,
+        dtype=object,
+    )
+    normalized = build_feature_frame(replace(dataset, segments=segments), SPEC)
+
+    assert str(normalized["construction_date"].dtype) == "datetime64[ns]"
+    assert_frame_equal(normalized, build_feature_frame(dataset, SPEC))
+
+
 def test_build_feature_frame_rejects_non_export(dataset: RepositoryExport) -> None:
     with pytest.raises(TypeError, match="RepositoryExport"):
         build_feature_frame(dataset.observations, SPEC)
+
+
+def test_v1_feature_frame_preserves_all_canonical_rows() -> None:
+    v1_spec = DatasetSpec(
+        dataset_segments=300,
+        dataset_months_per_segment=48,
+        dataset_observations=14_400,
+    )
+    segments = generate_segments(v1_spec, 42, observation_start=START)
+    events = generate_maintenance_events(segments, v1_spec, 42, start_date=START)
+    timeline = generate_accident_timeline(segments, v1_spec, 42, start_date=START)
+    observations = generate_observations(segments, events, timeline, v1_spec, 42, start_date=START)
+    targets = derive_observation_targets(observations, events)
+    cleaned = clean_raw_dataset(segments, observations, targets, events, v1_spec)
+    frame = build_feature_frame(
+        RepositoryExport(
+            segments=cleaned.segments,
+            observations=cleaned.observations,
+            targets=cleaned.targets,
+            maintenance_events=cleaned.maintenance_events,
+        ),
+        v1_spec,
+    )
+
+    assert len(frame) == 14_400
+    assert frame["segment_id"].nunique() == 300
+    assert tuple(frame.columns) == FEATURE_FRAME_COLUMNS

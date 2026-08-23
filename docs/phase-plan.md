@@ -69,8 +69,9 @@ event keys, history, costs, materials, latent fields, labels, splitting,
 imputation, encoding, scaling, models, and database I/O are out of scope.
 
 **Temporal acceptance:** equivalent shuffled input must produce the same
-canonical output; altering valid future targets or future events cannot alter
-any feature value.
+canonical output; altering a valid future event together with freshly
+re-derived valid targets cannot alter any feature value. Event-derived
+observation fields must match strictly-prior event keys before use.
 
 **Boundary acceptance:** invalid/forged source data fails after fresh Phase 5
 validation; caller-owned frames are unchanged; the output cannot contain a

@@ -682,8 +682,11 @@ initializer does not repair or delete them implicitly.
 Phase 7 creates the deterministic offline feature frame for later modelling.
 It accepts only a complete `RepositoryExport` from the Phase 6 read boundary
 and its explicit `DatasetSpec`; it deep-copies and re-runs complete cleaned
-validation before feature generation. A prior validation report or an
-equivalent-looking collection of frames is not a bypass token.
+validation before feature generation. It additionally verifies that
+`previous_repairs` and `days_since_last_maintenance` equal the values derived
+from strictly-prior `maintenance_events` (including the locked
+never-maintained cap). A prior validation report or an equivalent-looking
+collection of frames is not a bypass token.
 
 **Scope boundary.** Phase 7 joins validated public segment attributes to
 validated observation rows and produces a registry-defined frame only. It
@@ -718,5 +721,7 @@ does not authorize an unlisted engineered feature.
 
 **Provenance and determinism.** Targets and maintenance-event keys are read
 solely to revalidate the exported source boundary; they never influence any
-output value. The generator never mutates caller-owned frames and produces the
-same canonical frame and dtypes for equivalent shuffled input frames.
+output value. The generator never mutates caller-owned frames and normalizes
+the output keys, categoricals, datetimes, integers, and floats to the exact
+canonical Phase 6 dtypes. Equivalent shuffled input frames produce the same
+canonical frame.

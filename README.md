@@ -4,6 +4,10 @@ Predictive maintenance and risk intelligence for road infrastructure.
 
 ## Status
 
+The versioned execution authority is [the Phase plan](docs/phase-plan.md);
+the cross-phase semantic authority is [the system contract](docs/contracts.md).
+The README is an overview and does not override either document.
+
 Phase 1 (project foundation and system contracts) is implemented:
 
 - Python 3.12 package scaffold (`src` layout) managed with `uv`.

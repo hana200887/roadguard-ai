@@ -45,6 +45,17 @@ from roadguard.events import (
     monthly_hazard,
     observation_dates,
 )
+from roadguard.features import (
+    CLASSIFICATION_FEATURE_COLUMNS,
+    FEATURE_COLUMNS,
+    FEATURE_FRAME_COLUMNS,
+    FEATURE_KEY_COLUMNS,
+    FEATURE_REGISTRY,
+    REGRESSION_FEATURE_COLUMNS,
+    FeatureDefinition,
+    FeatureInputError,
+    build_feature_frame,
+)
 from roadguard.observations import generate_observations
 from roadguard.risk import risk_score_from_probability
 from roadguard.segments import SegmentMaster, generate_segments
@@ -57,20 +68,28 @@ from roadguard.targets import (
 
 __all__ = [
     "CleaningResult",
+    "CLASSIFICATION_FEATURE_COLUMNS",
     "ConfigError",
     "CorruptionEntry",
     "CorruptionManifest",
     "ENV_PREFIX",
+    "FEATURE_COLUMNS",
+    "FEATURE_FRAME_COLUMNS",
+    "FEATURE_KEY_COLUMNS",
+    "FEATURE_REGISTRY",
     "DatasetSpec",
     "DatabaseConfigurationError",
     "DatabaseUnavailableError",
     "GenerationError",
+    "FeatureDefinition",
+    "FeatureInputError",
     "LoadReport",
     "PersistenceConflict",
     "PersistenceError",
     "PostgresRepository",
     "RiskBand",
     "RiskBands",
+    "REGRESSION_FEATURE_COLUMNS",
     "RoadGuardConfig",
     "RepositoryExport",
     "RepositoryInputError",
@@ -82,6 +101,7 @@ __all__ = [
     "ValidationReport",
     "__version__",
     "clean_raw_dataset",
+    "build_feature_frame",
     "create_database_engine",
     "days_until_maintenance",
     "decay_condition",
