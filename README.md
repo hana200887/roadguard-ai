@@ -131,8 +131,18 @@ Phase 6 (transactional PostgreSQL persistence) is implemented:
 - Phase 6 requires PostgreSQL with the synchronous `psycopg` driver. The URL
   is runtime-only, optional in configuration, and stored as a masked secret.
 
-Not yet implemented (future phases): feature engineering, chronological
-splitting/scaling, ML models, API, dashboard, and Docker services.
+Phase 7 (point-in-time feature registry and generation) is accepted locally:
+
+- `roadguard.features.build_feature_frame` accepts a complete Phase 6
+  `RepositoryExport`, fresh-validates it, and returns the frozen target-free
+  feature frame in canonical key order and dtypes.
+- Event-derived maintenance features are checked against strictly-prior
+  `maintenance_events`; targets, future event keys, cost/material facts, and
+  latent fields cannot enter the frame.
+- The phase deliberately does not split, impute, encode, scale, or train.
+
+Not yet implemented (future phases): chronological splitting/preprocessing,
+ML models, API, dashboard, and Docker services.
 
 ## Quickstart
 

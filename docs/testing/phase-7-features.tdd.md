@@ -41,20 +41,28 @@ scope.
 | 7 | Object-date source values produce canonical `datetime64[ns]` output without mutating the source. | `test_build_feature_frame_normalizes_phase6_datetime_output` |
 | 8 | The V1 feature frame preserves all 14,400 canonical rows. | `test_v1_feature_frame_preserves_all_canonical_rows` |
 
-## Remaining external gate
+## Final external verification
 
-The exact complete-suite command was run in this environment:
+The disposable real PostgreSQL integration suite passed:
+
+```text
+TEST_DATABASE_URL=<disposable-local-url> uv run pytest tests/test_postgres_integration.py -q
+28 passed in 10.45s
+```
+
+The exact complete-suite command also passed in the same environment:
 
 ```text
 uv run pytest --cov=roadguard --cov-report=term-missing --cov-branch --cov-fail-under=80
 ```
 
-It reached 590 passing tests and 85.21% coverage, then reported 28 deliberate
-errors because `TEST_DATABASE_URL` is unset and the PostgreSQL integration
-fixture fails closed with `real PostgreSQL required; Phase 6 INCOMPLETE`.
-This is not recorded as a pass. A real disposable PostgreSQL URL is required
-to complete that external gate and move Phase 7 from `active` to
-`accepted-local`.
+```text
+618 passed in 207.46s; total branch coverage 95.79%
+```
+
+Phase 7 therefore meets its local acceptance criteria and is
+`accepted-local`. Publication remains subject to the Git fast-forward safety
+gate.
 
 `pip-audit` was not installed in the locked environment, so no new dependency
 audit result is asserted here.

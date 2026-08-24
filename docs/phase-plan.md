@@ -44,7 +44,7 @@ different remote history.
 | 4 | Event-derived target generation | Separate target frame | accepted-local |
 | 5 | Raw corruption, validation, and safe cleaning | Validated `CleaningResult` | accepted-local |
 | 6 | Transactional PostgreSQL persistence | Fixed schema and safe read/write boundary | accepted-local |
-| 7 | Point-in-time feature registry and generation | Frozen target-free feature frame | active |
+| 7 | Point-in-time feature registry and generation | Frozen target-free feature frame | accepted-local |
 | 8 | Chronological splitting and train-only preprocessing | 34/7/7 split and fitted transforms | planned |
 | 9 | Exploratory analysis and data card | Read-only reproducible EDA evidence | planned |
 | 10 | Baseline supervised evaluation | Baseline classifier/regressor metrics | planned |
