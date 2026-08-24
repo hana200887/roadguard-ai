@@ -57,6 +57,15 @@ from roadguard.features import (
     build_feature_frame,
 )
 from roadguard.observations import generate_observations
+from roadguard.preprocessing import (
+    ChronologicalSplit,
+    PreprocessingError,
+    PreprocessorFit,
+    TransformedData,
+    fit_preprocessor,
+    split_chronologically,
+    transform,
+)
 from roadguard.risk import risk_score_from_probability
 from roadguard.segments import SegmentMaster, generate_segments
 from roadguard.targets import (
@@ -72,6 +81,7 @@ __all__ = [
     "ConfigError",
     "CorruptionEntry",
     "CorruptionManifest",
+    "ChronologicalSplit",
     "ENV_PREFIX",
     "FEATURE_COLUMNS",
     "FEATURE_FRAME_COLUMNS",
@@ -87,6 +97,8 @@ __all__ = [
     "PersistenceConflict",
     "PersistenceError",
     "PostgresRepository",
+    "PreprocessingError",
+    "PreprocessorFit",
     "RiskBand",
     "RiskBands",
     "REGRESSION_FEATURE_COLUMNS",
@@ -96,6 +108,7 @@ __all__ = [
     "SegmentHistory",
     "SegmentMaster",
     "TARGET_COLUMNS",
+    "TransformedData",
     "V1Contract",
     "ValidationIssue",
     "ValidationReport",
@@ -110,6 +123,7 @@ __all__ = [
     "generate_maintenance_events",
     "generate_observations",
     "generate_segments",
+    "fit_preprocessor",
     "inject_observation_corruption",
     "initialize_database",
     "load_config",
@@ -119,6 +133,8 @@ __all__ = [
     "monthly_hazard",
     "observation_dates",
     "risk_score_from_probability",
+    "split_chronologically",
+    "transform",
     "validate_cleaned_dataset",
     "validate_raw_dataset",
 ]

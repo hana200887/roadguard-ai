@@ -725,3 +725,55 @@ output value. The generator never mutates caller-owned frames and normalizes
 the output keys, categoricals, datetimes, integers, and floats to the exact
 canonical Phase 6 dtypes. Equivalent shuffled input frames produce the same
 canonical frame.
+
+## 15. Chronological splitting and train-only preprocessing (Phase 8)
+
+Phase 8 accepts only the exact target-free Phase 7 feature frame from
+`docs/contracts.md` section 14 and its `DatasetSpec`. It splits by sorted
+unique observation dates and fits deterministic preprocessing on the training
+partition only. It does not join targets, engineer lag/rolling features,
+impute, clip, train a model, tune, persist artifacts, write a database, or
+serve an API.
+
+**Input boundary.** The frame must have exactly the `FEATURE_FRAME_COLUMNS`
+schema in exact order: `segment_id` and `date` are natural keys, never model
+features. Missing, extra, reordered, or duplicate-labelled columns, duplicate
+natural keys, malformed/timezone-aware/non-midnight dates, null values,
+non-finite numeric values, and invalid dtypes are rejected contextually. The
+frame must reproduce the complete `DatasetSpec` observation grid (exactly
+`dataset_months_per_segment` unique dates, `dataset_segments` segments per
+date, `dataset_observations` rows). For the V1 profile this means exactly 48
+unique dates, 300 segments per date, and 14,400 rows. Caller-owned frames are
+never mutated.
+
+**Chronological split.** `split_chronologically` sorts the unique observation
+dates and assigns the first 34 to training, the next 7 to validation, and the
+final 7 to testing. Partitions are disjoint, contiguous, and together
+reproduce the complete input; each is canonically sorted by (`segment_id`,
+`date`). Shuffling valid input rows never changes any partition. For V1 the
+exact row counts are 10,200 train, 2,100 validation, and 2,100 test.
+
+**Train-only preprocessing.** `fit_preprocessor` accepts only the complete
+provenance-checked `ChronologicalSplit`. It reconstructs and validates the
+full 48-date source and its partition membership, then fits only the canonical
+first 34 dates. A caller cannot present an arbitrary future-contaminated
+34-date frame as training data through the public API. The function returns
+an immutable `PreprocessorFit`:
+
+- `province` and `road_type` are one-hot encoded using the sorted unique
+  training categories only, producing stable columns named
+  `province_<category>` and `road_type_<category>`; unknown
+  validation/test categories encode as an all-zero row and never change the
+  fitted schema.
+- `construction_date` becomes the deterministic numeric day count since
+  1970-01-01 (column `construction_date_days`) and is scaled with training
+  statistics.
+- The remaining numeric Phase 7 features are scaled with training mean and
+  population standard deviation (zero-variance training columns transform to
+  a constant zero).
+
+`transform` applies only the fitted state to any frame: it never refits and
+never consults validation/test statistics. Every transformed feature value
+is a finite `float64`; partition keys are returned separately from model
+features. The stable transformed feature names are exposed as
+`PreprocessorFit.transformed_feature_columns`.

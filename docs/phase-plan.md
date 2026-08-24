@@ -45,7 +45,7 @@ different remote history.
 | 5 | Raw corruption, validation, and safe cleaning | Validated `CleaningResult` | accepted-local |
 | 6 | Transactional PostgreSQL persistence | Fixed schema and safe read/write boundary | accepted-local |
 | 7 | Point-in-time feature registry and generation | Frozen target-free feature frame | accepted-local |
-| 8 | Chronological splitting and train-only preprocessing | 34/7/7 split and fitted transforms | planned |
+| 8 | Chronological splitting and train-only preprocessing | 34/7/7 split and fitted transforms | accepted-local |
 | 9 | Exploratory analysis and data card | Read-only reproducible EDA evidence | planned |
 | 10 | Baseline supervised evaluation | Baseline classifier/regressor metrics | planned |
 | 11 | Advanced classification | Validation-selected classifier | planned |
@@ -78,4 +78,30 @@ validation; caller-owned frames are unchanged; the output cannot contain a
 forbidden column.
 
 **Exit:** all cross-phase gates pass, Phase 7 has independent review approval,
+and its evidence report records the RED and GREEN commands/results.
+
+## Phase 8 acceptance contract
+
+**Entry:** Phase 7 is accepted locally; the Phase 8 implementation receives
+the exact target-free Phase 7 feature frame plus its `DatasetSpec`.
+
+**Output:** `roadguard.preprocessing` splits by sorted unique observation
+dates into fixed 34/7/7 partitions and fits deterministic one-hot encoders
+and scaling statistics on the training partition only. The public workflow
+returns the partitions (keys preserved, canonically sorted), an immutable
+train-only fitted state, and transformed train/validation/test frames whose
+keys stay separate from finite `float64` model features. Models, tuning,
+artifacts, EDA, imputation, clipping, and any later-phase behavior are out of
+scope.
+
+**Temporal acceptance:** equivalent shuffled input produces the same
+partitions; validation/test rows, unseen categories, and extreme values never
+alter the fitted state or the transformed training output.
+
+**Boundary acceptance:** forged or invalid feature frames (wrong schema,
+dtypes, keys, dates, nulls, non-finite values, incomplete V1 grid) fail
+contextually; caller-owned frames are unchanged; keys and forbidden fields
+never become model features.
+
+**Exit:** all cross-phase gates pass, Phase 8 has independent review approval,
 and its evidence report records the RED and GREEN commands/results.

@@ -14,6 +14,7 @@ def test_package_imports_and_exposes_semver_version() -> None:
 def test_public_api_surface() -> None:
     expected = (
         "CleaningResult",
+        "ChronologicalSplit",
         "ConfigError",
         "CorruptionEntry",
         "CorruptionManifest",
@@ -26,6 +27,8 @@ def test_public_api_surface() -> None:
         "PersistenceConflict",
         "PersistenceError",
         "PostgresRepository",
+        "PreprocessingError",
+        "PreprocessorFit",
         "RiskBand",
         "RiskBands",
         "RoadGuardConfig",
@@ -34,6 +37,7 @@ def test_public_api_surface() -> None:
         "SegmentHistory",
         "SegmentMaster",
         "TARGET_COLUMNS",
+        "TransformedData",
         "V1Contract",
         "ValidationIssue",
         "ValidationReport",
@@ -46,6 +50,7 @@ def test_public_api_surface() -> None:
         "generate_maintenance_events",
         "generate_observations",
         "generate_segments",
+        "fit_preprocessor",
         "inject_observation_corruption",
         "initialize_database",
         "load_config",
@@ -55,6 +60,8 @@ def test_public_api_surface() -> None:
         "monthly_hazard",
         "observation_dates",
         "risk_score_from_probability",
+        "split_chronologically",
+        "transform",
         "validate_cleaned_dataset",
         "validate_raw_dataset",
     )

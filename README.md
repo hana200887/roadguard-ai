@@ -141,8 +141,20 @@ Phase 7 (point-in-time feature registry and generation) is accepted locally:
   latent fields cannot enter the frame.
 - The phase deliberately does not split, impute, encode, scale, or train.
 
-Not yet implemented (future phases): chronological splitting/preprocessing,
-ML models, API, dashboard, and Docker services.
+Phase 8 (chronological splitting and train-only preprocessing) is accepted
+locally:
+
+- `roadguard.preprocessing.split_chronologically` splits the exact Phase 7
+  feature frame into fixed 34/7/7 unique-date partitions with canonical key
+  order and V1-exact row counts.
+- `fit_preprocessor` accepts the complete provenance-checked split, verifies
+  its chronological membership, and fits one-hot categories and scaling
+  statistics from the canonical training partition only; `transform` applies
+  the immutable fitted state without refitting, keeping partition keys
+  separate from finite `float64` model features.
+
+Not yet implemented (future phases): ML models, API, dashboard, and Docker
+services.
 
 ## Quickstart
 
