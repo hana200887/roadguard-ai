@@ -4,6 +4,16 @@ from __future__ import annotations
 
 __version__ = "0.1.0"
 
+from roadguard.baselines import (
+    BASELINE_CLASSIFIER_NAME,
+    BASELINE_CONTRACT_VERSION,
+    BASELINE_REGRESSOR_NAME,
+    BaselineEvaluation,
+    BaselineEvaluationError,
+    ClassificationBaselineMetrics,
+    RegressionBaselineMetrics,
+    evaluate_baselines,
+)
 from roadguard.config import ENV_PREFIX, ConfigError, RoadGuardConfig, load_config
 from roadguard.contracts import (
     DatasetSpec,
@@ -90,12 +100,18 @@ from roadguard.targets import (
 )
 
 __all__ = [
-    "CleaningResult",
-    "ClassificationBalance",
+    "BASELINE_CLASSIFIER_NAME",
+    "BASELINE_CONTRACT_VERSION",
+    "BASELINE_REGRESSOR_NAME",
+    "BaselineEvaluation",
+    "BaselineEvaluationError",
     "CategoricalLevel",
     "CategoricalSummary",
     "ChronologicalSplit",
+    "ClassificationBalance",
+    "ClassificationBaselineMetrics",
     "CLASSIFICATION_FEATURE_COLUMNS",
+    "CleaningResult",
     "ConfigError",
     "CorruptionEntry",
     "CorruptionManifest",
@@ -121,9 +137,10 @@ __all__ = [
     "PostgresRepository",
     "PreprocessingError",
     "PreprocessorFit",
+    "REGRESSION_FEATURE_COLUMNS",
+    "RegressionBaselineMetrics",
     "RiskBand",
     "RiskBands",
-    "REGRESSION_FEATURE_COLUMNS",
     "RoadGuardConfig",
     "RepositoryExport",
     "RepositoryInputError",
@@ -144,6 +161,7 @@ __all__ = [
     "days_until_maintenance",
     "decay_condition",
     "derive_observation_targets",
+    "evaluate_baselines",
     "generate_accident_timeline",
     "generate_maintenance_events",
     "generate_observations",
