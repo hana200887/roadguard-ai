@@ -46,7 +46,7 @@ different remote history.
 | 6 | Transactional PostgreSQL persistence | Fixed schema and safe read/write boundary | published |
 | 7 | Point-in-time feature registry and generation | Frozen target-free feature frame | published |
 | 8 | Chronological splitting and train-only preprocessing | 34/7/7 split and fitted transforms | published |
-| 9 | Exploratory analysis and data card | Read-only reproducible EDA evidence | active |
+| 9 | Exploratory analysis and data card | Read-only reproducible EDA evidence | published |
 | 10 | Baseline supervised evaluation | Baseline classifier/regressor metrics | planned |
 | 11 | Advanced classification | Validation-selected classifier | planned |
 | 12 | Advanced regression | Validation-selected regressor | planned |
