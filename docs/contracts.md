@@ -1090,3 +1090,226 @@ the matching locked `PROVINCES` or `ROAD_TYPES` registry; forged dynamic text
 is rejected rather than interpolated. Equivalent shuffled source frames
 followed by a canonical Phase 7/8 rebuild produce equal `EDAReport` values,
 the same fingerprint, and byte-identical Markdown across calls.
+
+## 17. Baseline supervised evaluation (Phase 10)
+
+Phase 10 establishes one deterministic learned baseline for each supervised
+target without performing candidate tuning or publishing model artifacts. Its
+public module is `roadguard.baselines` and its only workflow is:
+
+```python
+evaluate_baselines(
+    dataset: RepositoryExport,
+    split: ChronologicalSplit,
+    fit: PreprocessorFit,
+    spec: DatasetSpec,
+) -> BaselineEvaluation
+```
+
+`BaselineEvaluationError` is the contextual `ValueError` subclass for invalid
+Phase 10 input, estimator, prediction, or metric state. The module `__all__`
+contains exactly `evaluate_baselines`, that error, `BaselineEvaluation`,
+`ClassificationBaselineMetrics`, `RegressionBaselineMetrics`, and these
+constants: `BASELINE_CONTRACT_VERSION`, `BASELINE_CLASSIFIER_NAME`,
+and `BASELINE_REGRESSOR_NAME`. The package root exposes the same symbols while
+preserving every locked Phase 1-9 export.
+
+Wrong top-level argument types and lookalike objects raise `TypeError` before
+any field is read. After all four arguments pass exact-type validation,
+expected lower-phase `FeatureInputError` and `PreprocessingError` failures,
+plus expected scikit-learn estimator/metric `ValueError` or arithmetic
+failures, are translated to
+`BaselineEvaluationError` with a fixed phase/context message and suppressed
+exception chaining. That public message contains no raw value, row, object
+representation, filesystem path, environment value, database URL, or
+credential. Phase 10's own domain checks raise `BaselineEvaluationError`
+directly. Unexpected programming failures and system-exiting exceptions are
+not relabeled as input errors.
+
+### Locked estimators and dependency
+
+Phase 10 adds the runtime dependency `scikit-learn>=1.5,<2`; `uv.lock` must pin
+the resolved version and transitive dependencies. Scikit-learn is used for
+the estimators and metrics below rather than maintaining custom numerical ML
+or metric implementations.
+
+The classifier is exactly `sklearn.dummy.DummyClassifier(strategy="prior")`.
+It learns only the training-label class prior, ignores feature values, uses no
+RNG, and its public name is exactly `dummy_prior`.
+
+The regressor is exactly `sklearn.dummy.DummyRegressor(strategy="median")`.
+It learns only the training-target median, ignores feature values, uses no
+RNG, and its public name is exactly `dummy_median`.
+
+These two estimators are neutral benchmarks, not Phase 11/12 candidate models.
+Phase 10 records their validation metrics but does not use those metrics to
+choose between estimators. Feature-dependent learning and validation-ranked
+candidate selection begin only in the later advanced-model phases.
+
+`BASELINE_CONTRACT_VERSION` is exactly `roadguard.phase10.v1`. Estimator
+objects, coefficients, predictions, and fitted preprocessing state remain
+private to the call and are never returned or persisted. Phase 10 has no
+random consumer and therefore introduces no seed argument or RNG namespace.
+
+### Input, provenance, and temporal boundary
+
+`evaluate_baselines` accepts exact instances of `RepositoryExport`,
+`ChronologicalSplit`, `PreprocessorFit`, and `DatasetSpec`. It deep-copies
+caller-owned frames, fresh-runs the complete cleaned-data validation through
+`build_feature_frame`, rebuilds the canonical `split_chronologically` result,
+and requires the supplied split to equal it in schema, dtypes, keys, dates,
+values, and partition membership. It calls `fit_preprocessor` on that complete
+canonical split, requires the supplied fit to equal the freshly reproduced fit
+field-for-field, and transforms train and validation internally. A caller
+cannot supply a transformed feature matrix, standalone target array,
+estimator, threshold, or lookalike input object.
+
+Targets remain separate and join one-to-one to each partition solely by the
+canonical (`segment_id`, `date`) keys after validation. Joined target order
+must exactly equal transformed key order. The classifier uses only
+`maintenance_within_30_days`; the regressor uses only
+`days_until_maintenance`. Keys, either target, future event keys,
+`maintenance_history`, costs, materials, latent generation fields, and every
+column outside `PreprocessorFit.transformed_feature_columns` are forbidden
+model features.
+
+Both estimators fit exactly once on the transformed 34-date training
+partition. The fitted estimators produce validation predictions exactly once;
+validation selects only the classifier threshold and records the locked
+metrics below. Only after both estimators and the threshold are frozen may the
+test partition be transformed and passed exactly once to one private
+test-evaluation boundary. Before that point, test feature/target values may be
+read only for fresh integrity and canonical-split validation; they cannot be
+transformed, predicted, summarized, ranked, or used by any fit/selection
+operation. There is no public API that accepts a frozen model and evaluates a
+test partition again. “Exactly once” means one private test stage per pure
+workflow invocation; it does not introduce a global counter, consumable token,
+filesystem marker, or other cross-call state.
+
+Changing only test feature/target values in a freshly valid matching export
+and split may change only test metrics. It cannot change fitted state,
+validation predictions/metrics, the threshold, estimator names,
+feature schema, or row counts. Changing only validation feature/target values
+may change validation metrics and the threshold but cannot change fitted
+preprocessing or estimator state. Equivalent shuffled upstream frames followed
+by canonical rebuilding produce equal results, subject only to the exact
+locked numerical library versions in `uv.lock`.
+
+### Threshold and metric semantics
+
+Classifier probabilities are the positive-class column from
+`predict_proba`. Each estimator scalar is converted once to an exact built-in
+`float` and must be finite and in `[0.0, 1.0]`; invalid output is rejected,
+never clipped. Candidate thresholds are `0.0`, `1.0`, and each distinct
+validation probability. A hard prediction is one
+when `probability >= threshold` and zero otherwise. Candidate thresholds are
+ranked by higher validation F1, then higher validation recall, then higher
+threshold; the first candidate under that total ordering is frozen. Training,
+validation, and test classification targets must each contain both integer
+classes 0 and 1. The test-label class check occurs only inside the frozen test
+stage.
+
+Classification metrics use scikit-learn with target class 1 as positive:
+
+- validation PR-AUC is `average_precision_score` on probabilities;
+- hard-label classification metrics use the frozen threshold over
+  `predict_proba`; `DummyClassifier.predict` is never used;
+- validation F1 and recall are `f1_score` and `recall_score` on hard labels,
+  both with `zero_division=0`;
+- test accuracy, precision, recall, and F1 use `accuracy_score`,
+  `precision_score`, `recall_score`, and `f1_score`, with
+  `zero_division=0` where accepted;
+- test ROC-AUC is `roc_auc_score` on probabilities;
+- the test confusion matrix is `confusion_matrix(labels=(0, 1))`, stored as
+  `((true_negative, false_positive), (false_negative, true_positive))`.
+
+Regression prediction scalars are converted once to finite built-in floats
+and evaluated raw: they are never clipped or rounded even when negative.
+Validation MAE and RMSE and test MAE and RMSE use `mean_absolute_error` and
+`root_mean_squared_error`. Test R-squared uses
+`r2_score(force_finite=False)`. The test regression target must contain at
+least two distinct values; a constant test target is rejected instead of
+allowing a forced or non-finite R-squared value.
+
+All returned float metrics and the selected threshold must be exact finite
+built-in floats. Counts must be exact built-in integers. Any non-finite
+estimator state or prediction, invalid metric output, invalid shape, or
+unexpected class ordering raises `BaselineEvaluationError`; no partial result
+is returned.
+
+### Frozen result schema
+
+All result types are `@dataclass(frozen=True)` and expose no mutable frame,
+array, estimator, mapping, or caller-owned object. Their fields and order are
+exactly:
+
+```python
+ClassificationBaselineMetrics(
+    validation_pr_auc: float,
+    decision_threshold: float,
+    validation_f1: float,
+    validation_recall: float,
+    test_accuracy: float,
+    test_precision: float,
+    test_recall: float,
+    test_f1: float,
+    test_roc_auc: float,
+    test_confusion_matrix: tuple[tuple[int, int], tuple[int, int]],
+)
+RegressionBaselineMetrics(
+    validation_mae: float,
+    validation_rmse: float,
+    test_mae: float,
+    test_rmse: float,
+    test_r2: float,
+)
+BaselineEvaluation(
+    contract_version: str,
+    classifier_name: str,
+    regressor_name: str,
+    feature_columns: tuple[str, ...],
+    train_rows: int,
+    validation_rows: int,
+    test_rows: int,
+    classification: ClassificationBaselineMetrics,
+    regression: RegressionBaselineMetrics,
+)
+```
+
+The contract version and estimator names equal the constants above;
+`feature_columns` equals the fitted
+`PreprocessorFit.transformed_feature_columns`; and row counts equal the exact
+canonical partitions (10,200/2,100/2,100 for V1). Results contain no split
+dates or data summaries already owned by earlier phases, no train metrics,
+predictions, coefficients, feature importance, calibration claim, risk score,
+risk band, filesystem path, timestamp, environment detail, or database
+credential.
+
+### Failure, testing, and scope boundary
+
+Invalid schemas/dtypes/keys/dates/values, duplicate or missing keys, target
+misalignment, forged partition membership or preprocessing state,
+null/non-finite features, invalid targets, degenerate classification
+partitions, constant test regression targets, invalid
+estimator/probability/prediction state, or
+non-finite metrics fail contextually without mutating caller-owned objects.
+
+RED-first tests must cover the exact public surface and frozen schemas; known
+classification/regression vectors against direct scikit-learn references;
+threshold primary and both tie-break rules; train-only fit; validation-only
+threshold selection; the single frozen test boundary; shuffled-input
+determinism; caller immutability; target/key alignment; every forbidden-field
+class; forged split/fit/lookalike inputs; non-finite and out-of-range estimator
+output; single-class partitions; constant test regression targets; and a
+complete V1-profile evaluation. The V1 test asserts schema,
+finite/ranged metrics, exact row counts, and reproducibility, not a locked
+performance value or superiority claim.
+
+Phase 10 is in-memory and introduces no direct PostgreSQL or filesystem I/O;
+there is no new Phase 10 database integration gate. Existing full-suite
+PostgreSQL tests still run as a cross-phase gate. Phase 10 does not perform
+feature-dependent learning, candidate/model/hyperparameter tuning,
+cross-validation, advanced classification/regression, calibration,
+artifact/model persistence, model
+registration, risk mapping, forecasting, optimization, inference,
+explainability, API/dashboard/container work, or any Phase 11+ behavior.
