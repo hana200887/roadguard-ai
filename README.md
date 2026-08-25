@@ -4,6 +4,10 @@ Predictive maintenance and risk intelligence for road infrastructure.
 
 ## Status
 
+The versioned execution authority is [the Phase plan](docs/phase-plan.md);
+the cross-phase semantic authority is [the system contract](docs/contracts.md).
+The README is an overview and does not override either document.
+
 Phase 1 (project foundation and system contracts) is implemented:
 
 - Python 3.12 package scaffold (`src` layout) managed with `uv`.
@@ -68,7 +72,7 @@ Phase 3 (observation-core synthetic generation) is implemented:
 - Documented Phase 3 RNG namespaces (`SeedSequence([seed, segment_key,
   OBSERVATION_RNG_NAMESPACE, stream])`), row-order independent and isolated
   from Phase 2 streams.
-- No targets, anomalies, material quantities, database or models yet;
+- No targets, anomalies, material quantities or models yet;
   targets are never used during generation.
 
 Phase 4 (event-derived supervised targets) is implemented:
@@ -81,7 +85,7 @@ Phase 4 (event-derived supervised targets) is implemented:
   in a frame physically separate from observation features, never containing
   cost, materials, static segment columns, or the internal
   `next_maintenance_date` state; future labels are forbidden model features.
-- No models, database, API or dashboard yet.
+- No models, API or dashboard yet.
 
 Phase 5 (raw-data corruption, validation and safe cleaning) is implemented:
 
@@ -104,8 +108,53 @@ Phase 5 (raw-data corruption, validation and safe cleaning) is implemented:
 - Test harness: `pytest` with `pytest-cov` (branch coverage, enforced
   `fail_under = 80`), `ruff`, and `mypy` (strict).
 
-Not yet implemented (future phases): target derivation, database access, ML
-models, API, dashboard, and Docker services.
+Phase 6 (transactional PostgreSQL persistence) is implemented:
+
+- A fixed `roadguard` schema with seven natural-key tables:
+  `road_segments`, `road_observations`, `maintenance_events`,
+  `observation_targets`, `maintenance_history`, `predictions`, and
+  `material_forecasts`. Observation features and future-derived targets
+  remain physically separate.
+- `load_cleaning_result` deep-copies and freshly revalidates a Phase 5 result
+  against an explicit `DatasetSpec`, then persists it in one transaction.
+  Replays are insert-or-verify: identical and concurrent rows are idempotent,
+  while a different row under the same natural key fails and rolls back the
+  entire load. Realized cost/material rows are optional but, when supplied,
+  must be complete; values are never fabricated from key-only events.
+- `PostgresRepository` provides deterministic physical exports, point-in-time
+  segment history (observations through `t`, maintenance events strictly
+  before `t`), and monthly material aggregation from realized maintenance
+  history only. Queries are built with bound SQLAlchemy expressions.
+- Multi-query reads run as read-only `REPEATABLE READ` snapshots. Schema
+  initialization verifies all seven existing tables and fails on drift rather
+  than silently accepting a partial or incompatible schema.
+- Phase 6 requires PostgreSQL with the synchronous `psycopg` driver. The URL
+  is runtime-only, optional in configuration, and stored as a masked secret.
+
+Phase 7 (point-in-time feature registry and generation) is accepted locally:
+
+- `roadguard.features.build_feature_frame` accepts a complete Phase 6
+  `RepositoryExport`, fresh-validates it, and returns the frozen target-free
+  feature frame in canonical key order and dtypes.
+- Event-derived maintenance features are checked against strictly-prior
+  `maintenance_events`; targets, future event keys, cost/material facts, and
+  latent fields cannot enter the frame.
+- The phase deliberately does not split, impute, encode, scale, or train.
+
+Phase 8 (chronological splitting and train-only preprocessing) is accepted
+locally:
+
+- `roadguard.preprocessing.split_chronologically` splits the exact Phase 7
+  feature frame into fixed 34/7/7 unique-date partitions with canonical key
+  order and V1-exact row counts.
+- `fit_preprocessor` accepts the complete provenance-checked split, verifies
+  its chronological membership, and fits one-hot categories and scaling
+  statistics from the canonical training partition only; `transform` applies
+  the immutable fitted state without refitting, keeping partition keys
+  separate from finite `float64` model features.
+
+Not yet implemented (future phases): ML models, API, dashboard, and Docker
+services.
 
 ## Quickstart
 
@@ -118,8 +167,9 @@ uv run mypy src
 
 ## Configuration
 
-Only runtime settings are configurable: `env`, `seed`, `data_dir`, and
-`artifacts_dir`. The V1 data/ML contract is locked and cannot be overridden.
+Only runtime settings are configurable: `env`, `seed`, `data_dir`,
+`artifacts_dir`, and the optional masked `database_url`. The V1 data/ML
+contract is locked and cannot be overridden.
 
 Configuration is resolved in this order (later wins):
 
@@ -129,13 +179,15 @@ Configuration is resolved in this order (later wins):
 3. Environment variables named `ROADGUARD_<FIELD>` (for example
    `ROADGUARD_SEED=7`).
 
-Invalid or unknown settings raise `pydantic.ValidationError`; unreadable
-files and unsupported `ROADGUARD_*` environment variable names raise
-`roadguard.ConfigError`. Boolean values are rejected for numeric fields;
-numeric strings such as `ROADGUARD_SEED=42` are accepted. Phase 1 reads
-process environment variables only; `.env` files are not parsed
-automatically. See `.env.example` for supported variable names and safe
-example values.
+Direct Pydantic model construction raises `pydantic.ValidationError` for
+invalid or unknown settings. `load_config` instead raises
+`roadguard.ConfigError` for invalid runtime values, unreadable or malformed
+files, and unsupported `ROADGUARD_*` environment variable names; its public
+errors never echo configuration values such as database credentials. Boolean
+values are rejected for numeric fields; numeric strings such as
+`ROADGUARD_SEED=42` are accepted. Phase 1 reads process environment variables
+only; `.env` files are not parsed automatically. See `.env.example` for
+supported variable names and safe example values.
 
 ## Contracts
 
