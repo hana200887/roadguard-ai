@@ -777,3 +777,314 @@ never consults validation/test statistics. Every transformed feature value
 is a finite `float64`; partition keys are returned separately from model
 features. The stable transformed feature names are exposed as
 `PreprocessorFit.transformed_feature_columns`.
+
+## 16. Train-only exploratory analysis and data card (Phase 9)
+
+Phase 9 produces reproducible descriptive evidence without weakening the
+frozen-test policy. Its public module is `roadguard.eda` and its only workflow
+is:
+
+```python
+build_eda_report(
+    dataset: RepositoryExport,
+    split: ChronologicalSplit,
+    spec: DatasetSpec,
+) -> EDAReport
+render_data_card(report: EDAReport) -> str
+```
+
+`EDAError` is the contextual `ValueError` subclass for invalid Phase 9 data.
+The module `roadguard.eda.__all__` contains exactly that error, the two
+workflow functions, and these result types: `EDAReport`, `SplitInventory`,
+`DataQualitySummary`, `NumericSummary`, `CategoricalLevel`,
+`CategoricalSummary`, `DateSummary`, `ClassificationBalance`, and
+`TargetCorrelation`. The package root additionally exposes the same Phase 9
+symbols while preserving every locked Phase 1-8 export. Each result type is a
+`@dataclass(frozen=True)` whose fields use only the exact built-in Python
+scalar types and tuples specified below; NumPy/Pandas scalar substitutes are
+not stored. No result exposes a caller-owned mutable frame or mapping.
+
+### Input and leakage boundary
+
+`build_eda_report` accepts exact instances of `RepositoryExport`,
+`ChronologicalSplit`, and `DatasetSpec`. It deep-copies caller-owned frames,
+fresh-runs the complete cleaned-data validation, rebuilds the exact Phase 7
+feature frame, runs `split_chronologically`, and requires the supplied split
+to equal that canonical result in schema, dtypes, keys, dates, values, and
+partition membership. A previous validation report, transformed frame,
+standalone training frame, or lookalike object is not accepted.
+
+Targets remain a separate source frame and are joined one-to-one by
+(`segment_id`, `date`) only after validation. Statistics and the training
+fingerprint use exactly the 34 training dates. Validation and test contribute
+only `SplitInventory` metadata: partition name, row count, unique-date count,
+first date, and last date. Their feature values and target values never
+influence any statistic, category inventory, correlation, fingerprint, or
+rendered text. Reading later-partition targets solely as part of fresh source
+integrity validation is not evaluation and must not expose them in the result.
+
+Phase 9 does not fit or apply preprocessing, impute, clip, engineer/select a
+feature, train/tune/select/evaluate a model, calculate model metrics, set a
+decision threshold, assign a risk band, persist an artifact, query or write a
+database, or write to the filesystem. In particular it reports no validation
+or test distribution, target prevalence, correlation, or model evidence.
+
+### Frozen report schema and ordering
+
+`EDAReport` contains exactly these fields in this order:
+
+1. `contract_version: str`, exactly `roadguard.phase9.v1`;
+2. `training_fingerprint: str`, the lowercase 64-character SHA-256 defined
+   below;
+3. `feature_columns: tuple[str, ...]`, exactly `FEATURE_COLUMNS`;
+4. `split_inventory: tuple[SplitInventory, ...]`, ordered train, validation,
+   test;
+5. `data_quality: DataQualitySummary`;
+6. `numeric_features: tuple[NumericSummary, ...]`, in numeric Phase 7 registry
+   order;
+7. `categorical_features: tuple[CategoricalSummary, ...]`, in categorical
+   Phase 7 registry order;
+8. `datetime_features: tuple[DateSummary, ...]`, in datetime Phase 7 registry
+   order;
+9. `regression_target: NumericSummary`, for `days_until_maintenance`;
+10. `classification_target: ClassificationBalance`, for
+    `maintenance_within_30_days`;
+11. `target_correlations: tuple[TargetCorrelation, ...]`, ordered first by
+    numeric Phase 7 registry order and then by `TARGET_COLUMNS[2:]` order. It
+    contains exactly one element for every Cartesian-product pair of those
+    two collections, with no missing or duplicate pair, so its cardinality is
+    `len(numeric_features) * len(TARGET_COLUMNS[2:])`.
+
+The nested dataclass fields and annotations are exactly:
+
+```python
+SplitInventory(
+    name: Literal["train", "validation", "test"],
+    row_count: int,
+    date_count: int,
+    first_date: date,
+    last_date: date,
+)
+DataQualitySummary(
+    row_count: int,
+    segment_count: int,
+    date_count: int,
+    duplicate_key_count: int,
+    missing_cell_count: int,
+    non_finite_numeric_count: int,
+)
+NumericSummary(
+    column: str,
+    count: int,
+    missing_count: int,
+    mean: float,
+    population_std: float,
+    minimum: float,
+    q1: float,
+    median: float,
+    q3: float,
+    maximum: float,
+    iqr_outlier_count: int,
+    iqr_outlier_rate: float,
+    zero_variance: bool,
+)
+CategoricalLevel(value: str, count: int, proportion: float)
+CategoricalSummary(
+    column: str,
+    count: int,
+    missing_count: int,
+    cardinality: int,
+    levels: tuple[CategoricalLevel, ...],
+)
+DateSummary(
+    column: str,
+    count: int,
+    missing_count: int,
+    unique_count: int,
+    minimum: date,
+    maximum: date,
+)
+ClassificationBalance(
+    column: str,
+    negative_count: int,
+    positive_count: int,
+    positive_rate: float,
+)
+TargetCorrelation(feature: str, target: str, pearson_r: float | None)
+```
+
+`DataQualitySummary` is calculated on the canonically sorted training
+feature/target join; missing cells cover every joined column and non-finite
+counts cover every numeric feature and target cell. Its last three values must
+be zero after fresh validation; they remain explicit evidence rather than
+being omitted.
+
+`NumericSummary` contains `column`, `count`, `missing_count`, `mean`,
+`population_std`, `minimum`, `q1`, `median`, `q3`, `maximum`,
+`iqr_outlier_count`, `iqr_outlier_rate`, and `zero_variance`.
+`CategoricalLevel` contains `value`, `count`, and `proportion`;
+`CategoricalSummary` contains `column`, `count`, `missing_count`,
+`cardinality`, and `levels`. Levels are ordered by descending count and then
+ascending Unicode code-point value. `DateSummary` contains `column`, `count`,
+`missing_count`, `unique_count`, `minimum`, and `maximum` as `date` values.
+`ClassificationBalance` contains `column`, `negative_count`, `positive_count`,
+and `positive_rate`. `TargetCorrelation` contains `feature`, `target`, and
+`pearson_r: float | None`.
+
+All counts are exact integers. Every descriptive calculation first converts
+each canonically ordered numeric value with `Decimal.from_float` for floats or
+`Decimal(value)` for integers, then operates sequentially in that order inside
+a fresh `decimal.localcontext` with precision 80, `ROUND_HALF_EVEN`,
+`Emin=-999999999`, `Emax=999999999`, and traps enabled for
+`InvalidOperation`, `DivisionByZero`, and `Overflow`. This context, not
+pandas/NumPy reductions or binary-float accumulation, is authoritative.
+
+Means and proportions use all training rows. The mean is the Decimal sum
+divided by the integer count. Population variance is the Decimal sum of
+squared deviations from that mean divided by count; population standard
+deviation is its Decimal square root (`ddof=0`). Quartiles use canonically
+sorted Decimal values and positions `(count - 1) * p` for exact Decimal
+`p` values `0.25`, `0.50`, and `0.75`; a non-integral position linearly
+interpolates its floor/ceiling values. An IQR outlier is strictly below
+`q1 - 1.5 * (q3 - q1)` or strictly above `q3 + 1.5 * (q3 - q1)` in Decimal
+arithmetic; its rate is the count divided by `count`. Before any reduction,
+an exact constant fast path checks whether every source Decimal equals the
+first. For a constant column, the mean/minimum/quartiles/maximum are that
+exact Decimal, variance and population standard deviation are exact Decimal
+zero, outlier count/rate are zero, and `zero_variance` is true. For a
+non-constant column, a computed zero variance is an arithmetic failure and
+raises `EDAError`; otherwise `zero_variance` is false.
+
+Pearson correlation uses Decimal means and the direct paired-row formula
+`sum((x-x_mean)*(y-y_mean)) / sqrt(sum((x-x_mean)^2)*sum((y-y_mean)^2))`;
+it is `None` when either source sequence is exactly constant according to the
+same pre-reduction check. A zero variance sum for a non-constant input raises
+`EDAError`. Each derived Decimal stored in a report is converted once with
+Python `float`; a non-finite or unrepresentable result, or any trapped Decimal
+operation, raises `EDAError` instead of emitting partial evidence. Source
+probes include huge finite constant and non-constant values near the
+`float64` limits; a huge constant must produce exact `population_std == 0.0`
+and `zero_variance is True`. No presentation rounding occurs in the report
+object, and every stored float is finite.
+
+### Canonical training fingerprint
+
+The fingerprint is SHA-256 over UTF-8 canonical JSON produced with sorted
+object keys, separators `(',', ':')`, ASCII escaping enabled, and non-finite
+values forbidden. The payload has exactly this shape (placeholders show the
+value type, not literal content):
+
+```json
+{
+  "columns": ["FEATURE_FRAME_COLUMNS + TARGET_COLUMNS[2:]"],
+  "contract": "roadguard.phase9.v1",
+  "spec": {
+    "dataset_months_per_segment": 0,
+    "dataset_observations": 0,
+    "dataset_segments": 0
+  },
+  "split": {
+    "test": ["YYYY-MM-DD"],
+    "train": ["YYYY-MM-DD"],
+    "validation": ["YYYY-MM-DD"]
+  },
+  "train_rows": [["canonical scalar"]]
+}
+```
+
+The displayed indentation is illustrative; canonical bytes use the compact
+separators specified above. The real `columns` array is exactly
+`FEATURE_FRAME_COLUMNS + TARGET_COLUMNS[2:]`; the real spec integers and all
+ordered split dates replace the placeholders. `train_rows` is sorted by
+(`segment_id`, `date`) and each row is an array in the exact declared column
+order after the one-to-one target join.
+
+Dates and datetimes canonicalize to `YYYY-MM-DD`, strings remain strings,
+integers remain JSON integers, and finite floats canonicalize to lowercase
+`float.hex()` strings with negative zero normalized to positive zero. The
+fingerprint therefore binds the training evidence and split provenance but
+does not hash validation/test feature or target values.
+
+### Deterministic data card
+
+`render_data_card` accepts only an exact, internally consistent `EDAReport`
+and rejects invalid contract versions, columns, ordering, malformed digests,
+non-finite values, invalid counts/rates, or contradictory totals. It returns
+UTF-8-compatible Markdown with `\n` line endings and exactly one trailing
+newline. The title and headings are exactly:
+
+```text
+# RoadGuard AI - Phase 9 Train-Only Data Card
+## Scope and leakage guard
+## Provenance
+## Split inventory
+## Training data quality
+## Training feature summaries
+### Numeric features
+### Categorical features
+### Datetime features
+## Training target summaries
+### Regression target
+### Classification target
+## Train-only target correlations
+## Limitations
+```
+
+The scope section contains exactly these bullets in order:
+
+```text
+- Statistics and correlations use only the canonical 34-date training partition.
+- Validation and test are represented only by row counts, date counts, and date boundaries.
+- No preprocessing was fit or applied, and no model was trained, selected, or evaluated.
+```
+
+The provenance section contains these bullets in order: ``- Contract:
+`roadguard.phase9.v1` ``; ``- Training fingerprint: `<digest>` ``; and
+``- Feature columns: `column_1`, `column_2`, ...`` using the exact report order
+and one code span per column. The split table columns are
+`Partition | Rows | Dates | First date | Last date`. The data-quality table
+columns are `Rows | Segments | Dates | Duplicate keys | Missing cells |
+Non-finite numeric cells`. The numeric-feature and regression-target tables
+use `Column | Count | Missing | Mean | Population std | Min | Q1 | Median | Q3
+| Max | IQR outliers | IQR outlier rate | Zero variance`. The categorical
+table uses `Column | Level | Count | Proportion`; the datetime table uses
+`Column | Count | Missing | Unique | Min | Max`; the classification table uses
+`Column | Negative | Positive | Positive rate`; and the correlation table uses
+`Feature | Target | Pearson r`. Each table uses the conventional Markdown
+delimiter row made only from `---` cells. Every table row begins and ends with
+`|` and uses one ASCII space between a pipe and its cell content.
+
+The headings, bullets, tables, and dynamic rows specified here are exhaustive;
+the renderer adds no other prose, headings, notes, blank blocks, or metadata.
+The categorical table contains exactly one row for every `CategoricalLevel`
+in report order. Rows follow report ordering. Integers use unsigned base-10 notation, dates use
+`YYYY-MM-DD`, booleans use lowercase `true` or `false`, and displayed floats
+are produced inside a fresh `decimal.localcontext` with precision 1100,
+`ROUND_HALF_EVEN`, `Emin=-999999999`, `Emax=999999999`, and traps enabled for
+`InvalidOperation`, `DivisionByZero`, and `Overflow`. Inside that context the
+renderer applies
+`Decimal.from_float(value).quantize(Decimal("0.000001"),
+rounding=ROUND_HALF_EVEN)`, then fixed-point formatting with exactly six
+decimal places; displayed negative zero is normalized to `0.000000`.
+Rendering failure raises `EDAError`, never partial Markdown. Tests replace the
+caller's global Decimal context and render summaries containing finite values
+near both `float64` limits. Undefined correlation is written `not-defined`.
+There is exactly one blank line between headings, prose/list blocks, and
+tables, and no blank line inside a table.
+
+The limitations section contains exactly these bullets in order:
+
+```text
+- This card is descriptive train-only evidence; it is not causal analysis or model-performance evidence.
+- Validation and test feature/target distributions were not summarized.
+- The SHA-256 fingerprint is an equality/integrity identifier, not anonymization, authentication, or a digital signature.
+```
+
+The renderer includes no wall-clock timestamp, host/path, random value,
+environment detail, database credential, raw row, or later-partition
+statistic. It requires the exact fixed field/column/target names, exact split
+names `train`, `validation`, and `test`, and categorical levels drawn only from
+the matching locked `PROVINCES` or `ROAD_TYPES` registry; forged dynamic text
+is rejected rather than interpolated. Equivalent shuffled source frames
+followed by a canonical Phase 7/8 rebuild produce equal `EDAReport` values,
+the same fingerprint, and byte-identical Markdown across calls.

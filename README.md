@@ -131,7 +131,7 @@ Phase 6 (transactional PostgreSQL persistence) is implemented:
 - Phase 6 requires PostgreSQL with the synchronous `psycopg` driver. The URL
   is runtime-only, optional in configuration, and stored as a masked secret.
 
-Phase 7 (point-in-time feature registry and generation) is accepted locally:
+Phase 7 (point-in-time feature registry and generation) is published:
 
 - `roadguard.features.build_feature_frame` accepts a complete Phase 6
   `RepositoryExport`, fresh-validates it, and returns the frozen target-free
@@ -141,8 +141,7 @@ Phase 7 (point-in-time feature registry and generation) is accepted locally:
   latent fields cannot enter the frame.
 - The phase deliberately does not split, impute, encode, scale, or train.
 
-Phase 8 (chronological splitting and train-only preprocessing) is accepted
-locally:
+Phase 8 (chronological splitting and train-only preprocessing) is published:
 
 - `roadguard.preprocessing.split_chronologically` splits the exact Phase 7
   feature frame into fixed 34/7/7 unique-date partitions with canonical key
@@ -150,8 +149,21 @@ locally:
 - `fit_preprocessor` accepts the complete provenance-checked split, verifies
   its chronological membership, and fits one-hot categories and scaling
   statistics from the canonical training partition only; `transform` applies
-  the immutable fitted state without refitting, keeping partition keys
+the immutable fitted state without refitting, keeping partition keys
   separate from finite `float64` model features.
+
+Phase 9 (train-only EDA and deterministic data card) is under implementation:
+
+- `roadguard.eda.build_eda_report` fresh-validates the complete Phase 6
+  export, rebuilds the Phase 7 feature frame and Phase 8 split, and computes
+  Decimal-exact descriptive statistics, quartiles, IQR outliers, target
+  correlations and a SHA-256 training fingerprint from the canonical 34-date
+  training partition only.
+- `render_data_card` renders the immutable `EDAReport` as deterministic
+  in-memory Markdown with no timestamps, paths, later-partition statistics or
+  I/O.
+- The phase does not fit or apply preprocessing, train models, or persist
+  artifacts.
 
 Not yet implemented (future phases): ML models, API, dashboard, and Docker
 services.
