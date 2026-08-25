@@ -191,13 +191,15 @@ Configuration is resolved in this order (later wins):
 3. Environment variables named `ROADGUARD_<FIELD>` (for example
    `ROADGUARD_SEED=7`).
 
-Invalid or unknown settings raise `pydantic.ValidationError`; unreadable
-files and unsupported `ROADGUARD_*` environment variable names raise
-`roadguard.ConfigError`. Boolean values are rejected for numeric fields;
-numeric strings such as `ROADGUARD_SEED=42` are accepted. Phase 1 reads
-process environment variables only; `.env` files are not parsed
-automatically. See `.env.example` for supported variable names and safe
-example values.
+Direct Pydantic model construction raises `pydantic.ValidationError` for
+invalid or unknown settings. `load_config` instead raises
+`roadguard.ConfigError` for invalid runtime values, unreadable or malformed
+files, and unsupported `ROADGUARD_*` environment variable names; its public
+errors never echo configuration values such as database credentials. Boolean
+values are rejected for numeric fields; numeric strings such as
+`ROADGUARD_SEED=42` are accepted. Phase 1 reads process environment variables
+only; `.env` files are not parsed automatically. See `.env.example` for
+supported variable names and safe example values.
 
 ## Contracts
 

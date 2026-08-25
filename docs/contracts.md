@@ -645,7 +645,9 @@ configuration, exposed as `ROADGUARD_DATABASE_URL` and held as a masked
 `SecretStr`. Persistence requires the exact synchronous
 `postgresql+psycopg` driver. Schema initialization is repeatable. Public
 configuration and database errors do not echo credentials or SQL parameter
-values.
+values. In particular, `load_config` converts YAML/environment validation
+failures into a context-free `ConfigError` rather than exposing Pydantic's
+raw input details.
 
 **Transactional ETL.** `load_cleaning_result` accepts only a validated
 `CleaningResult` plus its explicit `DatasetSpec`. It deep-copies and reruns the

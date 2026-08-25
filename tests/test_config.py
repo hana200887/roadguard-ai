@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import traceback
 from pathlib import Path
 
 import pytest
@@ -164,7 +165,7 @@ class TestEnvironmentOverrides:
 
     def test_invalid_environment_value_rejected(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("ROADGUARD_SEED", "not-a-number")
-        with pytest.raises(ValidationError):
+        with pytest.raises(ConfigError, match="Configuration validation failed"):
             load_config()
 
 
@@ -187,6 +188,20 @@ class TestUnknownEnvironmentVariables:
         message = str(excinfo.value)
         assert "ROADGUARD_BOGUS" in message
         assert "ROADGUARD_SED" in message
+
+    def test_unknown_environment_traceback_locals_mask_credential(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv(
+            "ROADGUARD_DATABASE_URL", "postgresql+psycopg://user:LOCAL_ENV_SECRET@host/db"
+        )
+        monkeypatch.setenv("ROADGUARD_BOGUS", "value")
+        with pytest.raises(ConfigError) as excinfo:
+            load_config()
+        rendered = "".join(
+            traceback.TracebackException.from_exception(excinfo.value, capture_locals=True).format()
+        )
+        assert "LOCAL_ENV_SECRET" not in rendered
 
     def test_locked_v1_fields_cannot_be_set_via_environment(
         self, monkeypatch: pytest.MonkeyPatch
@@ -259,8 +274,62 @@ class TestFileLoading:
     def test_unknown_yaml_key_rejected(self, tmp_path: Path) -> None:
         path = tmp_path / "config.yaml"
         path.write_text("bogus: true\n", encoding="utf-8")
-        with pytest.raises(ValidationError):
+        with pytest.raises(ConfigError, match="Configuration validation failed"):
             load_config(path)
+
+    def test_invalid_database_url_load_error_masks_credential(self, tmp_path: Path) -> None:
+        sentinel = "PHASE6_DATABASE_SECRET"
+        path = tmp_path / "config.yaml"
+        path.write_text(
+            f"database_url:\n  - postgresql+psycopg://user:{sentinel}@host/db\n",
+            encoding="utf-8",
+        )
+        with pytest.raises(ConfigError) as excinfo:
+            load_config(path)
+        assert sentinel not in str(excinfo.value)
+        assert sentinel not in repr(excinfo.value)
+        assert excinfo.value.__cause__ is None
+        assert excinfo.value.__context__ is None
+
+    def test_malformed_yaml_error_masks_credential(self, tmp_path: Path) -> None:
+        sentinel = "PHASE6_YAML_SECRET"
+        path = tmp_path / "config.yaml"
+        path.write_text(
+            f'database_url: "postgresql+psycopg://user:{sentinel}@host/db\n',
+            encoding="utf-8",
+        )
+        with pytest.raises(ConfigError) as excinfo:
+            load_config(path)
+        assert sentinel not in str(excinfo.value)
+        assert sentinel not in repr(excinfo.value)
+        assert excinfo.value.__cause__ is None
+        assert excinfo.value.__context__ is None
+
+    def test_validation_error_traceback_locals_mask_credential(self, tmp_path: Path) -> None:
+        path = tmp_path / "config.yaml"
+        path.write_text(
+            "database_url:\n  - postgresql+psycopg://user:LOCAL_CAPTURE_SECRET@host/db\n",
+            encoding="utf-8",
+        )
+        with pytest.raises(ConfigError) as excinfo:
+            load_config(path)
+        rendered = "".join(
+            traceback.TracebackException.from_exception(excinfo.value, capture_locals=True).format()
+        )
+        assert "LOCAL_CAPTURE_SECRET" not in rendered
+
+    def test_non_mapping_yaml_traceback_locals_mask_credential(self, tmp_path: Path) -> None:
+        path = tmp_path / "config.yaml"
+        path.write_text(
+            "- postgresql+psycopg://user:LOCAL_RAW_SECRET@host/db\n",
+            encoding="utf-8",
+        )
+        with pytest.raises(ConfigError) as excinfo:
+            load_config(path)
+        rendered = "".join(
+            traceback.TracebackException.from_exception(excinfo.value, capture_locals=True).format()
+        )
+        assert "LOCAL_RAW_SECRET" not in rendered
 
     @pytest.mark.parametrize(
         "yaml_text",
@@ -273,13 +342,13 @@ class TestFileLoading:
     def test_locked_v1_fields_cannot_be_set_via_yaml(self, tmp_path: Path, yaml_text: str) -> None:
         path = tmp_path / "config.yaml"
         path.write_text(yaml_text, encoding="utf-8")
-        with pytest.raises(ValidationError):
+        with pytest.raises(ConfigError, match="Configuration validation failed"):
             load_config(path)
 
     def test_yaml_boolean_seed_rejected(self, tmp_path: Path) -> None:
         path = tmp_path / "config.yaml"
         path.write_text("seed: true\n", encoding="utf-8")
-        with pytest.raises(ValidationError):
+        with pytest.raises(ConfigError, match="Configuration validation failed"):
             load_config(path)
 
     def test_yaml_numeric_string_seed_accepted(self, tmp_path: Path) -> None:
@@ -296,7 +365,7 @@ class TestValidation:
 
     def test_non_positive_seed_rejected_on_load_path(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("ROADGUARD_SEED", "-3")
-        with pytest.raises(ValidationError):
+        with pytest.raises(ConfigError, match="Configuration validation failed"):
             load_config()
 
     def test_invalid_env_rejected(self) -> None:

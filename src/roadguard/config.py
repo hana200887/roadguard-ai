@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import Any, Final, Literal
 
 import yaml
-from pydantic import BaseModel, ConfigDict, SecretStr, field_validator
+from pydantic import BaseModel, ConfigDict, SecretStr, ValidationError, field_validator
 
 from roadguard.contracts import NonBooleanInt, V1Contract
 
@@ -32,7 +32,7 @@ CONFIG_PATH_ENV: Final[str] = f"{ENV_PREFIX}CONFIG_PATH"
 
 
 class ConfigError(Exception):
-    """Raised when configuration cannot be read or parsed."""
+    """Raised when runtime configuration cannot be safely loaded."""
 
 
 class RoadGuardConfig(BaseModel):
@@ -73,9 +73,22 @@ def load_config(config_path: Path | str | None = None) -> RoadGuardConfig:
     Unsupported ``ROADGUARD_*`` environment variables raise
     :class:`ConfigError`.
     """
-    values: dict[str, Any] = _load_file_values(config_path)
-    values.update(_load_env_values())
-    return RoadGuardConfig.model_validate(values)
+    env_values = _load_env_values()
+    try:
+        file_values = _load_file_values(config_path)
+    except ConfigError:
+        env_values.clear()
+        raise
+    values = file_values | env_values
+    try:
+        return RoadGuardConfig.model_validate(values)
+    except ValidationError:
+        # Do not expose Pydantic's raw input values: they can include a
+        # credential-bearing ``database_url`` from YAML or the environment.
+        values.clear()
+        file_values.clear()
+        env_values.clear()
+    raise ConfigError("Configuration validation failed")
 
 
 def _load_file_values(config_path: Path | str | None) -> dict[str, Any]:
@@ -85,17 +98,22 @@ def _load_file_values(config_path: Path | str | None) -> dict[str, Any]:
     path = Path(resolved)
     if not path.is_file():
         raise ConfigError(f"Configuration file not found: {path}")
+    failed_to_load = False
     try:
         with path.open("r", encoding="utf-8") as handle:
             raw: Any = yaml.safe_load(handle)
-    except (OSError, yaml.YAMLError) as exc:
-        raise ConfigError(f"Failed to read configuration file {path}: {exc}") from exc
+    except (OSError, yaml.YAMLError):
+        failed_to_load = True
+    if failed_to_load:
+        # Parser diagnostics can reproduce the malformed line, including a
+        # credential. Do not retain that diagnostic as an exception context.
+        raise ConfigError("Unable to read or parse configuration file")
     if raw is None:
         return {}
     if not isinstance(raw, dict):
-        raise ConfigError(
-            f"Configuration file {path} must contain a mapping, got {type(raw).__name__}"
-        )
+        raw_type = type(raw).__name__
+        raw = None
+        raise ConfigError(f"Configuration file must contain a mapping, got {raw_type}")
     return {str(key): value for key, value in raw.items()}
 
 
@@ -113,6 +131,8 @@ def _load_env_values() -> dict[str, Any]:
         else:
             unknown.append(env_name)
     if unknown:
+        values.clear()
+        value = ""
         raise ConfigError(
             "Unsupported ROADGUARD_* environment variable(s): " + ", ".join(sorted(unknown))
         )
