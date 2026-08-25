@@ -38,15 +38,15 @@ different remote history.
 
 | # | Single responsibility | Required output | Status |
 | --- | --- | --- | --- |
-| 1 | Foundation and locked system contracts | Configuration and immutable V1 contract | accepted-local |
-| 2 | Segment master and event engine | Deterministic segments, events, accident timeline | accepted-local |
-| 3 | Causal observation generation | Clean observation-core frame | accepted-local |
-| 4 | Event-derived target generation | Separate target frame | accepted-local |
-| 5 | Raw corruption, validation, and safe cleaning | Validated `CleaningResult` | accepted-local |
-| 6 | Transactional PostgreSQL persistence | Fixed schema and safe read/write boundary | accepted-local |
-| 7 | Point-in-time feature registry and generation | Frozen target-free feature frame | accepted-local |
-| 8 | Chronological splitting and train-only preprocessing | 34/7/7 split and fitted transforms | accepted-local |
-| 9 | Exploratory analysis and data card | Read-only reproducible EDA evidence | planned |
+| 1 | Foundation and locked system contracts | Configuration and immutable V1 contract | published |
+| 2 | Segment master and event engine | Deterministic segments, events, accident timeline | published |
+| 3 | Causal observation generation | Clean observation-core frame | published |
+| 4 | Event-derived target generation | Separate target frame | published |
+| 5 | Raw corruption, validation, and safe cleaning | Validated `CleaningResult` | published |
+| 6 | Transactional PostgreSQL persistence | Fixed schema and safe read/write boundary | published |
+| 7 | Point-in-time feature registry and generation | Frozen target-free feature frame | published |
+| 8 | Chronological splitting and train-only preprocessing | 34/7/7 split and fitted transforms | published |
+| 9 | Exploratory analysis and data card | Read-only reproducible EDA evidence | active |
 | 10 | Baseline supervised evaluation | Baseline classifier/regressor metrics | planned |
 | 11 | Advanced classification | Validation-selected classifier | planned |
 | 12 | Advanced regression | Validation-selected regressor | planned |
@@ -105,3 +105,36 @@ never become model features.
 
 **Exit:** all cross-phase gates pass, Phase 8 has independent review approval,
 and its evidence report records the RED and GREEN commands/results.
+
+## Phase 9 acceptance contract
+
+**Entry:** Phase 8 is accepted locally; the Phase 9 implementation receives a
+complete Phase 6 `RepositoryExport`, the exact canonical Phase 8
+`ChronologicalSplit`, and their matching `DatasetSpec`.
+
+**Output:** `roadguard.eda` fresh-validates and reproduces the Phase 7 feature
+frame and Phase 8 split, joins the separate targets to the training keys only,
+and returns an immutable `EDAReport`. `render_data_card` turns only that report
+into deterministic in-memory Markdown. The exact report schema, statistics,
+ordering, fingerprint, and rendering rules are frozen in
+`docs/contracts.md` section 16. Filesystem/database writes, plots, notebooks,
+HTML/CSV/JSON artifacts, transformed features, fitting, models, tuning,
+selection, and all Phase 10 behavior are out of scope.
+
+**Temporal acceptance:** feature and target statistics use only the canonical
+34-date training partition. Validation and test may contribute only their
+names, row/date counts, and date boundaries; their feature values and target
+values never influence a summary, correlation, fingerprint, or rendered data
+card. Equivalent shuffled upstream inputs followed by canonical rebuilding
+produce equal `EDAReport` values and byte-identical Markdown.
+
+**Boundary acceptance:** forged/mismatched exports, specs, splits, keys,
+schemas, dtypes, dates, or target relationships fail contextually;
+structurally invalid or internally contradictory report objects cannot be
+rendered. Caller-owned objects are unchanged. Rendering performs no I/O,
+contains no generated timestamp or environment-specific path, and cannot
+claim validation/test or model-performance evidence.
+
+**Exit:** all cross-phase gates pass, Phase 9 has independent review approval,
+and its evidence report records the RED and GREEN commands/results. No Phase
+10 code, dependency, metric, or artifact may be included.
