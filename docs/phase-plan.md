@@ -138,3 +138,41 @@ claim validation/test or model-performance evidence.
 **Exit:** all cross-phase gates pass, Phase 9 has independent review approval,
 and its evidence report records the RED and GREEN commands/results. No Phase
 10 code, dependency, metric, or artifact may be included.
+
+## Phase 10 acceptance contract
+
+**Entry:** Phase 9 is published. The Phase 10 implementation receives a
+complete Phase 6 `RepositoryExport`, the exact canonical Phase 8
+`ChronologicalSplit`, its matching immutable train-only `PreprocessorFit`, and
+their matching `DatasetSpec`.
+
+**Output:** `roadguard.baselines.evaluate_baselines` fresh-validates the
+export, reproduces the Phase 7 feature frame and Phase 8 split, fits the
+canonical train-only preprocessor and rejects a mismatched supplied fit,
+trains exactly one locked training-prior dummy classifier and one locked
+training-median dummy regressor, selects the classifier threshold on validation
+only, and returns immutable validation/test metrics.
+The exact API, estimators, parameters, result schema, metric semantics,
+determinism policy, and failure rules are frozen in `docs/contracts.md`
+section 17.
+
+**Temporal acceptance:** no model or preprocessing statistic may use
+validation/test rows. Validation is used only for the locked classifier
+PR-AUC/F1/recall evidence, threshold selection, and locked regression
+MAE/RMSE evidence. The test partition is transformed and evaluated exactly
+once, only after both estimators and the decision threshold are frozen. Test
+features or targets cannot affect fitting, validation metrics, threshold
+selection, or any returned provenance field.
+
+**Boundary acceptance:** forged/mismatched exports, specs, splits, keys,
+schemas, dtypes, dates, target relationships, non-finite values, invalid
+preprocessor state, degenerate classification partitions, constant test
+regression targets, invalid probabilities, or non-finite predictions fail
+contextually. Caller-owned objects are unchanged; keys, targets, future event
+keys, costs, materials, and latent fields never become model features.
+
+**Exit:** all cross-phase gates pass, Phase 10 has independent review approval,
+and its evidence report records genuine RED and GREEN commands/results. No
+advanced model/tuning, artifact persistence, risk mapping, forecasting,
+optimization, inference, explainability, service, dashboard, container, or
+later-phase behavior may be included.

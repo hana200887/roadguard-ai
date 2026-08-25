@@ -152,7 +152,7 @@ Phase 8 (chronological splitting and train-only preprocessing) is published:
 the immutable fitted state without refitting, keeping partition keys
   separate from finite `float64` model features.
 
-Phase 9 (train-only EDA and deterministic data card) is under implementation:
+Phase 9 (train-only EDA and deterministic data card) is published:
 
 - `roadguard.eda.build_eda_report` fresh-validates the complete Phase 6
   export, rebuilds the Phase 7 feature frame and Phase 8 split, and computes
@@ -165,8 +165,12 @@ Phase 9 (train-only EDA and deterministic data card) is under implementation:
 - The phase does not fit or apply preprocessing, train models, or persist
   artifacts.
 
-Not yet implemented (future phases): ML models, API, dashboard, and Docker
-services.
+The Phase 10 baseline-supervised-evaluation contract is frozen; implementation
+has not started. It locks a deterministic training-prior dummy classifier and
+training-median dummy regressor, validation-only threshold selection, one
+frozen test evaluation, and immutable metrics. Feature-dependent models and
+other advanced models, model artifacts, API, dashboard, and Docker services
+remain future phases.
 
 ## Quickstart
 
