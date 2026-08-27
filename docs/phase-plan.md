@@ -216,3 +216,42 @@ commands/results. No advanced regression, calibration, hyperparameter search,
 cross-validation, artifact persistence, risk mapping, forecasting,
 optimization, inference, explainability, service, dashboard, container, or
 later-phase behavior may be included.
+
+## Phase 12 acceptance contract
+
+**Entry:** Phase 11 is published. The Phase 12 implementation receives a
+complete Phase 6 `RepositoryExport`, the exact canonical Phase 8
+`ChronologicalSplit`, its matching immutable train-only `PreprocessorFit`,
+their matching `DatasetSpec`, and an exact immutable `RoadGuardConfig`.
+
+**Output:** `roadguard.regression.evaluate_advanced_regressor` fresh-validates
+the export, reproduces the Phase 7 feature frame, Phase 8 split, and train-only
+preprocessing fit, then fits exactly two locked feature-dependent regression
+candidates on training data only. It records validation MAE/RMSE for both,
+selects exactly one candidate by the fixed validation ranking, and returns
+immutable selected-model test MAE/RMSE/R-squared metrics. The exact API,
+candidate constructors, seed derivation, selection ranking, result schema,
+metric semantics, determinism policy, and failure rules are frozen in
+`docs/contracts.md` section 19.
+
+**Temporal acceptance:** no candidate or preprocessing statistic may use
+validation/test rows while fitting. Validation is the sole source of all model
+selection evidence. After the winning candidate is frozen, only that candidate
+may receive the test matrix, exactly once inside one private test stage. Test
+features or targets cannot affect candidate fit state, candidate validation
+metrics, selected name, feature schema, or row counts.
+
+**Boundary acceptance:** forged/mismatched exports, specs, splits, fits,
+config seeds, keys, schemas, dtypes, dates, target relationships, non-finite
+values, invalid predictions, invalid model output, invalid metric output, or a
+constant test regression target fail contextually. Caller-owned objects are
+unchanged; keys, targets, future event keys, costs, materials, and latent
+fields never become model features. The evaluator neither loads configuration
+nor reads environment variables.
+
+**Exit:** all cross-phase gates pass, Phase 12 has independent review
+approval, and its evidence report records genuine RED and GREEN
+commands/results. No calibration, hyperparameter search, cross-validation,
+artifact persistence, risk mapping, forecasting, optimization, inference,
+explainability, service, dashboard, container, or later-phase behavior may be
+included.

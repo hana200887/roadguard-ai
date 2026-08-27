@@ -1574,3 +1574,249 @@ the existing full-suite PostgreSQL tests remain a cross-phase gate. It does not
 perform advanced regression, artifact/model persistence or registration, risk
 mapping, material forecasting, optimization, inference, explainability,
 API/dashboard/container work, or any Phase 12+ behavior.
+
+## 19. Advanced regression (Phase 12)
+
+Phase 12 selects one fixed, feature-dependent regressor using validation
+evidence. It does not persist a model or perform any later-phase work. Its
+public module is `roadguard.regression` and its only workflow is:
+
+```python
+evaluate_advanced_regressor(
+    dataset: RepositoryExport,
+    split: ChronologicalSplit,
+    fit: PreprocessorFit,
+    spec: DatasetSpec,
+    config: RoadGuardConfig,
+) -> AdvancedRegressionEvaluation
+```
+
+`AdvancedRegressionError` is the contextual `ValueError` subclass for invalid
+Phase 12 input, estimator, prediction, selection, or metric state. The module
+`__all__` contains exactly `evaluate_advanced_regressor`, that error,
+`CandidateRegressionValidationMetrics`, `TestRegressionMetrics`,
+`AdvancedRegressionEvaluation`, and these constants:
+`ADVANCED_REGRESSOR_CONTRACT_VERSION`, `ADVANCED_REGRESSOR_RNG_NAMESPACE`,
+and `CANDIDATE_REGRESSOR_NAMES`. The package root exposes the same symbols
+while preserving every locked Phase 1-11 export.
+
+All five arguments must be exact instances of their declared types; wrong
+top-level types and lookalike objects raise `TypeError` before any field is
+read. The evaluator never calls `load_config` and never reads a configuration
+file or an environment variable. After exact-type validation, expected
+lower-phase `FeatureInputError` and `PreprocessingError`, plus expected
+scikit-learn estimator/metric `ValueError` or arithmetic failures, are
+translated to `AdvancedRegressionError` with a fixed phase/context message and
+suppressed exception chaining. Its public message contains no raw value, row,
+object representation, filesystem path, environment value, database URL, or
+credential. Phase 12 domain checks raise that error directly. Unexpected
+programming failures and system-exiting exceptions are not relabeled as input
+errors.
+
+### Locked candidates, dependency, and seed derivation
+
+Phase 12 adds no dependency: it uses the exact `scikit-learn>=1.5,<2`
+environment already locked by Phase 10. The constants are exactly:
+
+```python
+ADVANCED_REGRESSOR_CONTRACT_VERSION = "roadguard.phase12.v1"
+ADVANCED_REGRESSOR_RNG_NAMESPACE = 0x5247312
+CANDIDATE_REGRESSOR_NAMES = ("ridge_l2", "hist_gradient_boosting")
+```
+
+The candidate order above is observable selection provenance and is also the
+final tie-break order. It is not caller configurable. The supplied
+`RoadGuardConfig` is not returned, persisted, or rendered. Only `config.seed`
+participates in evaluation; its `env`, `data_dir`, `artifacts_dir`, and
+`database_url` fields are ignored and cannot change a result. After exact
+top-level type validation, the evaluator reads only `config.seed`, requires
+its exact built-in type to be `int` (not `bool` or a subclass), and its value
+to be at least one. A forged or invalid seed raises
+`AdvancedRegressionError` with a fixed configuration-seed message; no other
+config field is validated, read, or represented in an error.
+
+`ridge_l2` is exactly:
+
+```python
+Ridge(
+    alpha=1.0,
+    fit_intercept=True,
+    solver="svd",
+    tol=1e-8,
+    positive=False,
+)
+```
+
+It is deterministic and receives no random state. For
+`hist_gradient_boosting`, whose locked candidate index is one, the evaluator
+derives exactly one built-in `int` seed from:
+
+```python
+int(
+    np.random.SeedSequence(
+        [config.seed, ADVANCED_REGRESSOR_RNG_NAMESPACE, candidate_index]
+    ).generate_state(1, dtype=np.uint32)[0]
+)
+```
+
+It passes that derived seed as `random_state` to this exact constructor:
+
+```python
+HistGradientBoostingRegressor(
+    loss="squared_error",
+    learning_rate=0.05,
+    max_iter=100,
+    max_leaf_nodes=15,
+    l2_regularization=1.0,
+    early_stopping=False,
+    random_state=derived_seed,
+)
+```
+
+There is no public seed argument, global RNG use, unseeded stochastic
+operation, caller-supplied estimator, parameter, feature matrix, target,
+prediction, or candidate beyond this two-element set. The locked
+numerical-library versions in `uv.lock` bound reproducibility.
+
+### Input, provenance, and temporal boundary
+
+The evaluator deep-copies caller-owned export frames, fresh-runs complete
+cleaned-data validation through `build_feature_frame`, rebuilds the canonical
+`split_chronologically` result, and requires the supplied split to equal it in
+schema, dtypes, keys, dates, values, and partition membership. It calls
+`fit_preprocessor` on the complete canonical split, requires the supplied fit
+to equal the freshly reproduced fit field-for-field, and internally transforms
+train and validation. A caller cannot supply transformed features, a target
+array, a model, a prediction, a seed, or a lookalike input object.
+
+Targets join one-to-one to each transformed partition solely by canonical
+(`segment_id`, `date`) keys, and joined target order must exactly equal key
+order. The sole target is `days_until_maintenance`. Keys, both target columns,
+future event keys, `maintenance_history`, costs, materials, latent generation
+fields, and every column outside `PreprocessorFit.transformed_feature_columns`
+are forbidden model features.
+
+Each candidate fits exactly once on the transformed 34-date training partition
+and receives the transformed seven-date validation partition exactly once via
+`predict`. Validation is used only for candidate records and the selection
+rule below. Only after both candidate records and the selected name are frozen
+may the test partition be transformed exactly once and passed to one private
+test-evaluation boundary. The selected candidate receives that test matrix
+exactly once through `predict`; all test metrics derive solely from that one
+captured prediction vector. The loser must never receive a test matrix,
+produce a test prediction, rank, or otherwise consume a test value. There is
+no public API that accepts a fitted candidate and evaluates a test partition
+again, and no cross-call test counter or state.
+
+Changing only test feature/target values in a freshly valid matching export
+and split may change only the selected candidate's test metrics. It cannot
+change either fitted candidate state, any candidate validation record, the
+selected name, feature schema, or row counts. Changing only validation
+feature/target values may change validation records, selection, and downstream
+selected-test metrics, but cannot change fitted candidate state or the
+transformed training output. Equivalent shuffled upstream frames followed by
+canonical rebuilding produce equal results for the same exact config and
+locked numerical-library versions. Changing `config.seed` may alter only the
+histogram-gradient-boosting candidate state and downstream evidence; it never
+changes source validation, split, preprocessing fit, feature schema, or row
+counts.
+
+### Regression selection and metric semantics
+
+Every `predict` output must be an `ndarray` of shape `(partition_rows,)`.
+Each prediction scalar is converted exactly once to a finite built-in `float`.
+Invalid output is rejected, never clipped or rounded; negative finite
+predictions remain raw model output. Validation targets must be integer
+`days_until_maintenance` values. Test targets must contain at least two
+distinct values, and that test-target check occurs only inside the frozen
+private test stage.
+
+Each candidate record contains `mean_absolute_error` validation MAE and
+`root_mean_squared_error` validation RMSE on its captured validation
+predictions. The selected candidate is the record with lower validation MAE,
+then lower validation RMSE, then earlier position in
+`CANDIDATE_REGRESSOR_NAMES`. This is the complete ranking: no test metric,
+baseline comparison, random draw, model internals, prediction magnitude, or
+candidate name may break a tie.
+
+The selected candidate's captured test predictions produce `mean_absolute_error`
+test MAE, `root_mean_squared_error` test RMSE, and
+`r2_score(force_finite=False)` test R-squared. MAE and RMSE are finite built-in
+floats greater than or equal to zero. R-squared is a finite built-in float,
+may be negative, and has no artificial `[0, 1]` range restriction. Invalid
+shape, non-finite or non-numeric prediction, invalid metric output,
+out-of-domain MAE/RMSE, non-finite R-squared, or a constant test target raises
+`AdvancedRegressionError`; no partial result is returned.
+
+### Frozen result schema
+
+All result types are `@dataclass(frozen=True)` and expose no mutable frame,
+array, estimator, mapping, prediction, seed, configuration, or caller-owned
+object. Their fields and order are exactly:
+
+```python
+CandidateRegressionValidationMetrics(
+    regressor_name: str,
+    validation_mae: float,
+    validation_rmse: float,
+)
+
+TestRegressionMetrics(
+    mae: float,
+    rmse: float,
+    r2: float,
+)
+
+AdvancedRegressionEvaluation(
+    contract_version: str,
+    selected_regressor_name: str,
+    feature_columns: tuple[str, ...],
+    train_rows: int,
+    validation_rows: int,
+    test_rows: int,
+    candidates: tuple[
+        CandidateRegressionValidationMetrics,
+        CandidateRegressionValidationMetrics,
+    ],
+    test: TestRegressionMetrics,
+)
+```
+
+`contract_version` equals `ADVANCED_REGRESSOR_CONTRACT_VERSION`, candidate
+records preserve the exact locked order, `selected_regressor_name` equals the
+`regressor_name` of exactly one candidate record, and `feature_columns` equals
+the reproduced `PreprocessorFit.transformed_feature_columns`. V1 row counts
+are exactly 10,200/2,100/2,100. Results contain no model, model parameters,
+coefficients, feature importance, calibration claim, risk score/band, artifact
+path, timestamp, environment detail, database credential, train metric, raw
+prediction, or test-derived selection evidence.
+
+### Failure, testing, and scope boundary
+
+Invalid schemas/dtypes/keys/dates/values, duplicate or missing keys, target
+misalignment, forged partition membership or preprocessing state, invalid
+config seed, null/non-finite features, invalid targets, a constant test
+regression target, invalid seed derivation, invalid estimator output, or
+non-finite metrics fail contextually without mutating caller-owned objects.
+
+RED-first tests must cover the absent public module before implementation;
+exact public/package surface and frozen schema; both exact constructors and
+the histogram-gradient-boosting derived seed; direct scikit-learn known-vector
+metric comparisons; MAE, RMSE, and fixed-order candidate-selection ties; exact
+train-only fit inputs; validation-only selection; one private selected-only
+test stage with exactly one test transform, exactly one selected `predict`
+call, and no loser test call; shuffled-input and same-config determinism;
+changed-seed and ignored-config-field boundaries; caller immutability;
+target/key alignment; every forbidden-field class; forged
+export/split/fit/config-seed/lookalike inputs; malformed, non-finite, and
+wrong-shape predictions; invalid metric output; constant test targets; and a
+complete V1 evaluation. The V1 test asserts schema, row counts, finite/raw
+metrics, and reproducibility; it does not lock performance values, require
+either candidate to win, or claim superiority over Phase 10 baselines.
+
+Phase 12 is in-memory and introduces no direct PostgreSQL or filesystem I/O;
+the existing full-suite PostgreSQL tests remain a cross-phase gate. It does not
+perform calibration, hyperparameter search, cross-validation, artifact/model
+persistence or registration, risk mapping, material forecasting, optimization,
+inference, explainability, API/dashboard/container work, or any Phase 13+
+behavior.
