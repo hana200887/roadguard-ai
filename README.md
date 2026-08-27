@@ -171,6 +171,14 @@ regressor, validation-only threshold selection, one frozen test evaluation,
 and immutable metrics. Feature-dependent models and other advanced models,
 model artifacts, API, dashboard, and Docker services remain future phases.
 
+The Phase 11 advanced-classification contract is frozen and its
+implementation is underway on a dedicated branch. It locks two feature
+dependent candidates (L2-penalized logistic regression and histogram gradient
+boosting) with derived per-candidate seeds, validation-only selection, one
+frozen selected-model test evaluation, and immutable metrics. Advanced
+regression, calibration, hyperparameter search, artifact persistence, and all
+later-phase work remain future phases.
+
 ## Quickstart
 
 ```powershell

@@ -14,6 +14,16 @@ from roadguard.baselines import (
     RegressionBaselineMetrics,
     evaluate_baselines,
 )
+from roadguard.classification import (
+    ADVANCED_CLASSIFIER_CONTRACT_VERSION,
+    ADVANCED_CLASSIFIER_RNG_NAMESPACE,
+    CANDIDATE_CLASSIFIER_NAMES,
+    AdvancedClassificationError,
+    AdvancedClassificationEvaluation,
+    CandidateValidationMetrics,
+    TestClassificationMetrics,
+    evaluate_advanced_classifier,
+)
 from roadguard.config import ENV_PREFIX, ConfigError, RoadGuardConfig, load_config
 from roadguard.contracts import (
     DatasetSpec,
@@ -100,11 +110,17 @@ from roadguard.targets import (
 )
 
 __all__ = [
+    "ADVANCED_CLASSIFIER_CONTRACT_VERSION",
+    "ADVANCED_CLASSIFIER_RNG_NAMESPACE",
+    "AdvancedClassificationError",
+    "AdvancedClassificationEvaluation",
     "BASELINE_CLASSIFIER_NAME",
     "BASELINE_CONTRACT_VERSION",
     "BASELINE_REGRESSOR_NAME",
     "BaselineEvaluation",
     "BaselineEvaluationError",
+    "CANDIDATE_CLASSIFIER_NAMES",
+    "CandidateValidationMetrics",
     "CategoricalLevel",
     "CategoricalSummary",
     "ChronologicalSplit",
@@ -149,6 +165,7 @@ __all__ = [
     "SplitInventory",
     "TARGET_COLUMNS",
     "TargetCorrelation",
+    "TestClassificationMetrics",
     "TransformedData",
     "V1Contract",
     "ValidationIssue",
@@ -161,6 +178,7 @@ __all__ = [
     "days_until_maintenance",
     "decay_condition",
     "derive_observation_targets",
+    "evaluate_advanced_classifier",
     "evaluate_baselines",
     "generate_accident_timeline",
     "generate_maintenance_events",

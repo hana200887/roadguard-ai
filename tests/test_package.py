@@ -13,11 +13,17 @@ def test_package_imports_and_exposes_semver_version() -> None:
 
 def test_public_api_surface() -> None:
     expected = (
+        "ADVANCED_CLASSIFIER_CONTRACT_VERSION",
+        "ADVANCED_CLASSIFIER_RNG_NAMESPACE",
+        "AdvancedClassificationError",
+        "AdvancedClassificationEvaluation",
         "BASELINE_CLASSIFIER_NAME",
         "BASELINE_CONTRACT_VERSION",
         "BASELINE_REGRESSOR_NAME",
         "BaselineEvaluation",
         "BaselineEvaluationError",
+        "CANDIDATE_CLASSIFIER_NAMES",
+        "CandidateValidationMetrics",
         "CategoricalLevel",
         "CategoricalSummary",
         "ChronologicalSplit",
@@ -54,6 +60,7 @@ def test_public_api_surface() -> None:
         "SplitInventory",
         "TARGET_COLUMNS",
         "TargetCorrelation",
+        "TestClassificationMetrics",
         "TransformedData",
         "V1Contract",
         "ValidationIssue",
@@ -64,6 +71,7 @@ def test_public_api_surface() -> None:
         "days_until_maintenance",
         "decay_condition",
         "derive_observation_targets",
+        "evaluate_advanced_classifier",
         "evaluate_baselines",
         "generate_accident_timeline",
         "generate_maintenance_events",
