@@ -12,6 +12,7 @@ import dataclasses
 import inspect
 import math
 from dataclasses import replace
+from datetime import date
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -28,6 +29,17 @@ from sklearn.metrics import (  # type: ignore[import-untyped]
     r2_score,
     root_mean_squared_error,
 )
+from test_classification import (
+    CRAFTED_SPEC,
+    V1_SPEC,
+    _canonical_fit,
+    _canonical_split,
+    _crafted_export,
+    _export_a,
+    _export_c,
+    _generated_export,
+    _month_15,
+)
 
 import roadguard
 from roadguard import RepositoryExport, RoadGuardConfig
@@ -40,17 +52,11 @@ from roadguard.regression import (
     AdvancedRegressionError,
     AdvancedRegressionEvaluation,
     CandidateRegressionValidationMetrics,
-    TestRegressionMetrics,
     _select_candidate_index,
     evaluate_advanced_regressor,
 )
-from test_classification import (
-    CRAFTED_SPEC,
-    V1_SPEC,
-    _canonical_fit,
-    _canonical_split,
-    _export_c,
-    _generated_export,
+from roadguard.regression import (
+    TestRegressionMetrics as RegressionTestMetricsSchema,
 )
 
 PUBLIC_NAMES = (
@@ -196,7 +202,7 @@ class TestFrozenSchema:
             "validation_mae",
             "validation_rmse",
         )
-        assert tuple(field.name for field in dataclasses.fields(TestRegressionMetrics)) == (
+        assert tuple(field.name for field in dataclasses.fields(RegressionTestMetricsSchema)) == (
             "mae",
             "rmse",
             "r2",
@@ -299,6 +305,60 @@ class TestTemporalAndFeatureBoundary:
             transform(split_c.train, fit_c).features,
         )
 
+    def test_fresh_valid_test_target_change_cannot_affect_selection(self) -> None:
+        common = [date(2022, 3, 20), date(2022, 10, 5)] + [
+            _month_15(month_index) for month_index in range(36, 42)
+        ]
+        baseline_export = _crafted_export(
+            common + [_month_15(month_index) for month_index in range(49, 61)]
+        )
+        changed_export = _crafted_export(
+            common
+            + [_month_15(49).replace(day=20)]
+            + [_month_15(month_index) for month_index in range(50, 61)]
+        )
+        baseline_split = _canonical_split(baseline_export, CRAFTED_SPEC)
+        changed_split = _canonical_split(changed_export, CRAFTED_SPEC)
+        baseline_fit = _canonical_fit(baseline_split, CRAFTED_SPEC)
+        changed_fit = _canonical_fit(changed_split, CRAFTED_SPEC)
+        assert_frame_equal(
+            build_feature_frame(baseline_export, CRAFTED_SPEC),
+            build_feature_frame(changed_export, CRAFTED_SPEC),
+        )
+        for partition in ("train", "validation", "test"):
+            assert_frame_equal(
+                getattr(baseline_split, partition),
+                getattr(changed_split, partition),
+            )
+            assert getattr(baseline_split, f"{partition}_dates") == getattr(
+                changed_split, f"{partition}_dates"
+            )
+        assert baseline_fit == changed_fit
+
+        baseline = evaluate_advanced_regressor(
+            baseline_export,
+            baseline_split,
+            baseline_fit,
+            CRAFTED_SPEC,
+            RoadGuardConfig(),
+        )
+        changed = evaluate_advanced_regressor(
+            changed_export,
+            changed_split,
+            changed_fit,
+            CRAFTED_SPEC,
+            RoadGuardConfig(),
+        )
+        assert changed.candidates == baseline.candidates
+        assert changed.selected_regressor_name == baseline.selected_regressor_name
+        assert changed.feature_columns == baseline.feature_columns
+        assert (changed.train_rows, changed.validation_rows, changed.test_rows) == (
+            baseline.train_rows,
+            baseline.validation_rows,
+            baseline.test_rows,
+        )
+        assert changed.test != baseline.test
+
     def test_feature_columns_match_fit_and_exclude_forbidden(
         self, result_c: AdvancedRegressionEvaluation, fit_c: Any
     ) -> None:
@@ -345,6 +405,41 @@ class TestInputAndConfigBoundary:
             with pytest.raises(TypeError, match=label):
                 evaluate_advanced_regressor(*arguments)
 
+    def test_top_level_subclasses_are_rejected_before_field_access(
+        self, dataset_c: RepositoryExport, split_c: Any, fit_c: Any
+    ) -> None:
+        from roadguard import DatasetSpec
+        from roadguard.preprocessing import ChronologicalSplit, PreprocessorFit
+
+        class ExportSubclass(RepositoryExport):
+            pass
+
+        class SplitSubclass(ChronologicalSplit):
+            pass
+
+        class FitSubclass(PreprocessorFit):
+            pass
+
+        class SpecSubclass(DatasetSpec):
+            pass
+
+        class ConfigSubclass(RoadGuardConfig):
+            pass
+
+        invalid = (
+            object.__new__(ExportSubclass),
+            object.__new__(SplitSubclass),
+            object.__new__(FitSubclass),
+            SpecSubclass.model_construct(),
+            ConfigSubclass.model_construct(),
+        )
+        valid = [dataset_c, split_c, fit_c, CRAFTED_SPEC, RoadGuardConfig()]
+        for index, value in enumerate(invalid):
+            arguments = list(valid)
+            arguments[index] = value
+            with pytest.raises(TypeError):
+                evaluate_advanced_regressor(*arguments)
+
     def test_invalid_and_missing_config_seed_rejected(
         self, dataset_c: RepositoryExport, split_c: Any, fit_c: Any
     ) -> None:
@@ -381,7 +476,7 @@ class TestInputAndConfigBoundary:
     def test_caller_owned_frames_unchanged(
         self, dataset_c: RepositoryExport, split_c: Any, fit_c: Any
     ) -> None:
-        before = tuple(
+        export_before = tuple(
             frame.copy(deep=True)
             for frame in (
                 dataset_c.segments,
@@ -390,7 +485,20 @@ class TestInputAndConfigBoundary:
                 dataset_c.maintenance_events,
             )
         )
-        evaluate_advanced_regressor(dataset_c, split_c, fit_c, CRAFTED_SPEC, RoadGuardConfig())
+        split_before = tuple(
+            getattr(split_c, partition).copy(deep=True)
+            for partition in ("train", "validation", "test")
+        )
+        split_dates_before = (
+            split_c.train_dates,
+            split_c.validation_dates,
+            split_c.test_dates,
+        )
+        fit_before = dataclasses.astuple(fit_c)
+        spec_before = CRAFTED_SPEC.model_dump()
+        config = RoadGuardConfig()
+        config_before = config.model_dump()
+        evaluate_advanced_regressor(dataset_c, split_c, fit_c, CRAFTED_SPEC, config)
         for actual, expected in zip(
             (
                 dataset_c.segments,
@@ -398,10 +506,24 @@ class TestInputAndConfigBoundary:
                 dataset_c.targets,
                 dataset_c.maintenance_events,
             ),
-            before,
+            export_before,
             strict=True,
         ):
             assert_frame_equal(actual, expected)
+        for partition, expected in zip(
+            (split_c.train, split_c.validation, split_c.test),
+            split_before,
+            strict=True,
+        ):
+            assert_frame_equal(partition, expected)
+        assert (
+            split_c.train_dates,
+            split_c.validation_dates,
+            split_c.test_dates,
+        ) == split_dates_before
+        assert dataclasses.astuple(fit_c) == fit_before
+        assert CRAFTED_SPEC.model_dump() == spec_before
+        assert config.model_dump() == config_before
 
     def test_forged_split_fit_and_target_rejected(
         self, dataset_c: RepositoryExport, split_c: Any, fit_c: Any
@@ -435,6 +557,19 @@ class TestInputAndConfigBoundary:
 
 
 class TestMetricSemantics:
+    def test_constant_test_target_is_rejected_inside_private_test_stage(self) -> None:
+        dataset = _export_a()
+        split = _canonical_split(dataset, CRAFTED_SPEC)
+        fit = _canonical_fit(split, CRAFTED_SPEC)
+        with pytest.raises(AdvancedRegressionError, match="test regression targets"):
+            evaluate_advanced_regressor(
+                dataset,
+                split,
+                fit,
+                CRAFTED_SPEC,
+                RoadGuardConfig(),
+            )
+
     def test_negative_finite_r2_is_allowed(
         self, monkeypatch: pytest.MonkeyPatch, dataset_c: RepositoryExport, split_c: Any, fit_c: Any
     ) -> None:

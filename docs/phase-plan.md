@@ -49,7 +49,7 @@ different remote history.
 | 9 | Exploratory analysis and data card | Read-only reproducible EDA evidence | published |
 | 10 | Baseline supervised evaluation | Baseline classifier/regressor metrics | published |
 | 11 | Advanced classification | Validation-selected classifier | published |
-| 12 | Advanced regression | Validation-selected regressor | planned |
+| 12 | Advanced regression | Validation-selected regressor | active |
 | 13 | Frozen selection, artifacts, and risk mapping | Manifested selected artifacts and risk output | planned |
 | 14 | Material forecasting | Rolling-origin network-month forecast | planned |
 | 15 | Maintenance optimization | Constraint-validated optimization recommendation | planned |

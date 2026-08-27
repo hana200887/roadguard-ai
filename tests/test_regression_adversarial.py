@@ -2,22 +2,25 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import Any
 
 import numpy as np
 import pytest
 from sklearn.ensemble import HistGradientBoostingRegressor  # type: ignore[import-untyped]
 from sklearn.linear_model import Ridge  # type: ignore[import-untyped]
+from test_classification import CRAFTED_SPEC, _canonical_fit, _canonical_split, _export_c
 
 import roadguard.regression as regression
 from roadguard import RepositoryExport, RoadGuardConfig
 from roadguard.classification import AdvancedClassificationError
+from roadguard.features import FEATURE_KEY_COLUMNS
+from roadguard.preprocessing import transform
 from roadguard.regression import (
     ADVANCED_REGRESSOR_RNG_NAMESPACE,
     AdvancedRegressionError,
     evaluate_advanced_regressor,
 )
-from test_classification import CRAFTED_SPEC, _canonical_fit, _canonical_split, _export_c
 
 
 @pytest.fixture(scope="module")
@@ -161,17 +164,68 @@ class TestFitPredictAndTransformBoundary:
         )
         fit_calls = [call for call in calls if call[1] == "fit"]
         predict_calls = [call for call in calls if call[1] == "predict"]
+        validation_x = transform(split_c.validation, fit_c).features.to_numpy(dtype="float64")
+        test_x = transform(split_c.test, fit_c).features.to_numpy(dtype="float64")
         assert len(fit_calls) == 2
-        assert all(call[2].shape[0] == len(split_c.train) for call in fit_calls)
+        train_transformed = transform(split_c.train, fit_c)
+        expected_x_train = train_transformed.features.to_numpy(dtype="float64")
+        expected_y_train = train_transformed.keys.merge(
+            dataset_c.targets[[*FEATURE_KEY_COLUMNS, "days_until_maintenance"]],
+            how="left",
+            on=list(FEATURE_KEY_COLUMNS),
+            sort=False,
+            validate="one_to_one",
+        )["days_until_maintenance"].to_numpy(dtype="int64")
+        assert all(np.array_equal(call[2], expected_x_train) for call in fit_calls)
+        assert all(np.array_equal(call[3], expected_y_train) for call in fit_calls)
         assert len(predict_calls) == 3
-        validation_calls = [
-            call for call in predict_calls if call[2].shape[0] == len(split_c.validation)
-        ]
-        test_calls = [call for call in predict_calls if call[2].shape[0] == len(split_c.test)]
+        validation_calls = [call for call in predict_calls if np.array_equal(call[2], validation_x)]
+        test_calls = [call for call in predict_calls if np.array_equal(call[2], test_x)]
         assert len(validation_calls) == 2
         assert len(test_calls) == 1
         expected_winner = "ridge" if result.selected_regressor_name == "ridge_l2" else "hgb"
         assert test_calls[0][0] == expected_winner
+        assert [(call[0], call[1]) for call in calls] == [
+            ("ridge", "fit"),
+            ("ridge", "predict"),
+            ("hgb", "fit"),
+            ("hgb", "predict"),
+            (expected_winner, "predict"),
+        ]
+
+    def test_changed_seed_changes_only_hgb_constructor_seed(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        dataset_c: RepositoryExport,
+        split_c: Any,
+        fit_c: Any,
+    ) -> None:
+        ridge_calls: list[dict[str, object]] = []
+        hgb_calls: list[dict[str, object]] = []
+
+        def ridge_spy(**kwargs: object) -> Any:
+            ridge_calls.append(kwargs)
+            return Ridge(**kwargs)
+
+        def hgb_spy(**kwargs: object) -> Any:
+            hgb_calls.append(kwargs)
+            return HistGradientBoostingRegressor(**kwargs)
+
+        monkeypatch.setattr(regression, "Ridge", ridge_spy)
+        monkeypatch.setattr(regression, "HistGradientBoostingRegressor", hgb_spy)
+        for seed in (42, 43):
+            evaluate_advanced_regressor(
+                dataset_c,
+                split_c,
+                fit_c,
+                CRAFTED_SPEC,
+                RoadGuardConfig(seed=seed),
+            )
+        assert ridge_calls[0] == ridge_calls[1]
+        assert {key: value for key, value in hgb_calls[0].items() if key != "random_state"} == {
+            key: value for key, value in hgb_calls[1].items() if key != "random_state"
+        }
+        assert hgb_calls[0]["random_state"] != hgb_calls[1]["random_state"]
 
     def test_test_transform_occurs_once_after_two_validation_predictions(
         self,
@@ -203,6 +257,7 @@ class TestPredictionValidation:
             np.zeros((7, 1)),
             np.zeros(6),
             np.array(["x"] * 7, dtype=object),
+            np.array(["1.25"] * 7, dtype=object),
             np.array([np.nan] + [1.0] * 6),
             np.array([np.inf] + [1.0] * 6),
         ],
@@ -272,11 +327,33 @@ class TestPredictionValidation:
 
 
 class TestMetricValidation:
+    def test_r2_uses_force_finite_false(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        dataset_c: RepositoryExport,
+        split_c: Any,
+        fit_c: Any,
+    ) -> None:
+        calls: list[dict[str, object]] = []
+
+        def r2_spy(y_true: Any, y_pred: Any, **kwargs: object) -> float:
+            calls.append(kwargs)
+            return -0.25
+
+        monkeypatch.setattr(regression, "r2_score", r2_spy)
+        result = evaluate_advanced_regressor(
+            dataset_c, split_c, fit_c, CRAFTED_SPEC, RoadGuardConfig()
+        )
+        assert result.test.r2 == -0.25
+        assert calls == [{"force_finite": False}]
+
     @pytest.mark.parametrize(
         ("name", "value"),
         [
             ("mean_absolute_error", -1.0),
             ("root_mean_squared_error", -1.0),
+            ("mean_absolute_error", "1.0"),
+            ("root_mean_squared_error", "1.0"),
             ("mean_absolute_error", float("nan")),
             ("root_mean_squared_error", float("inf")),
         ],
@@ -308,3 +385,59 @@ class TestMetricValidation:
 
 def test_phase12_does_not_reuse_classification_error() -> None:
     assert not issubclass(AdvancedRegressionError, AdvancedClassificationError)
+
+
+class TestPoisonedNestedObjects:
+    def test_poisoned_export_copy_method_cannot_leak_or_change_result(
+        self,
+        dataset_c: RepositoryExport,
+        split_c: Any,
+        fit_c: Any,
+    ) -> None:
+        baseline = evaluate_advanced_regressor(
+            dataset_c, split_c, fit_c, CRAFTED_SPEC, RoadGuardConfig()
+        )
+        poisoned = dataset_c.observations.copy(deep=True)
+        object.__setattr__(
+            poisoned,
+            "copy",
+            lambda *args, **kwargs: (_ for _ in ()).throw(ValueError("SENSITIVE_INPUT_MARKER")),
+        )
+        forged = replace(dataset_c, observations=poisoned)
+        assert (
+            evaluate_advanced_regressor(
+                forged,
+                split_c,
+                fit_c,
+                CRAFTED_SPEC,
+                RoadGuardConfig(),
+            )
+            == baseline
+        )
+
+    def test_poisoned_split_reset_index_method_cannot_leak_or_change_result(
+        self,
+        dataset_c: RepositoryExport,
+        split_c: Any,
+        fit_c: Any,
+    ) -> None:
+        baseline = evaluate_advanced_regressor(
+            dataset_c, split_c, fit_c, CRAFTED_SPEC, RoadGuardConfig()
+        )
+        poisoned = split_c.train.copy(deep=True)
+        object.__setattr__(
+            poisoned,
+            "reset_index",
+            lambda *args, **kwargs: (_ for _ in ()).throw(ValueError("SENSITIVE_INPUT_MARKER")),
+        )
+        forged = replace(split_c, train=poisoned)
+        assert (
+            evaluate_advanced_regressor(
+                dataset_c,
+                forged,
+                fit_c,
+                CRAFTED_SPEC,
+                RoadGuardConfig(),
+            )
+            == baseline
+        )

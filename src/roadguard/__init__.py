@@ -100,6 +100,16 @@ from roadguard.preprocessing import (
     split_chronologically,
     transform,
 )
+from roadguard.regression import (
+    ADVANCED_REGRESSOR_CONTRACT_VERSION,
+    ADVANCED_REGRESSOR_RNG_NAMESPACE,
+    CANDIDATE_REGRESSOR_NAMES,
+    AdvancedRegressionError,
+    AdvancedRegressionEvaluation,
+    CandidateRegressionValidationMetrics,
+    TestRegressionMetrics,
+    evaluate_advanced_regressor,
+)
 from roadguard.risk import risk_score_from_probability
 from roadguard.segments import SegmentMaster, generate_segments
 from roadguard.targets import (
@@ -110,16 +120,22 @@ from roadguard.targets import (
 )
 
 __all__ = [
+    "ADVANCED_REGRESSOR_CONTRACT_VERSION",
+    "ADVANCED_REGRESSOR_RNG_NAMESPACE",
     "ADVANCED_CLASSIFIER_CONTRACT_VERSION",
     "ADVANCED_CLASSIFIER_RNG_NAMESPACE",
     "AdvancedClassificationError",
     "AdvancedClassificationEvaluation",
+    "AdvancedRegressionError",
+    "AdvancedRegressionEvaluation",
     "BASELINE_CLASSIFIER_NAME",
     "BASELINE_CONTRACT_VERSION",
     "BASELINE_REGRESSOR_NAME",
     "BaselineEvaluation",
     "BaselineEvaluationError",
     "CANDIDATE_CLASSIFIER_NAMES",
+    "CANDIDATE_REGRESSOR_NAMES",
+    "CandidateRegressionValidationMetrics",
     "CandidateValidationMetrics",
     "CategoricalLevel",
     "CategoricalSummary",
@@ -166,6 +182,7 @@ __all__ = [
     "TARGET_COLUMNS",
     "TargetCorrelation",
     "TestClassificationMetrics",
+    "TestRegressionMetrics",
     "TransformedData",
     "V1Contract",
     "ValidationIssue",
@@ -179,6 +196,7 @@ __all__ = [
     "decay_condition",
     "derive_observation_targets",
     "evaluate_advanced_classifier",
+    "evaluate_advanced_regressor",
     "evaluate_baselines",
     "generate_accident_timeline",
     "generate_maintenance_events",
