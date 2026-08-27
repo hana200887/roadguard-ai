@@ -178,6 +178,13 @@ selection, one frozen selected-model test evaluation, and immutable metrics.
 Advanced regression, calibration, hyperparameter search, artifact persistence,
 and all later-phase work remain future phases.
 
+The Phase 12 advanced-regression contract is frozen and implementation is
+underway on a dedicated branch. It locks Ridge-SVD and histogram gradient
+boosting candidates, train-only fitting, validation MAE/RMSE selection, one
+selected-only frozen test evaluation, and immutable metrics. Artifact
+persistence, risk mapping, forecasting, optimization, and all Phase 13+ work
+remain future phases.
+
 ## Quickstart
 
 ```powershell
