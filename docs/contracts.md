@@ -1313,3 +1313,264 @@ cross-validation, advanced classification/regression, calibration,
 artifact/model persistence, model
 registration, risk mapping, forecasting, optimization, inference,
 explainability, API/dashboard/container work, or any Phase 11+ behavior.
+
+## 18. Advanced classification (Phase 11)
+
+Phase 11 selects one fixed, feature-dependent classifier using validation
+evidence. It does not persist a model or perform any later-phase work. Its
+public module is `roadguard.classification` and its only workflow is:
+
+```python
+evaluate_advanced_classifier(
+    dataset: RepositoryExport,
+    split: ChronologicalSplit,
+    fit: PreprocessorFit,
+    spec: DatasetSpec,
+    config: RoadGuardConfig,
+) -> AdvancedClassificationEvaluation
+```
+
+`AdvancedClassificationError` is the contextual `ValueError` subclass for
+invalid Phase 11 input, estimator, prediction, selection, or metric state.
+The module `__all__` contains exactly `evaluate_advanced_classifier`, that
+error, `CandidateValidationMetrics`, `TestClassificationMetrics`,
+`AdvancedClassificationEvaluation`, and these constants:
+`ADVANCED_CLASSIFIER_CONTRACT_VERSION`, `ADVANCED_CLASSIFIER_RNG_NAMESPACE`,
+and `CANDIDATE_CLASSIFIER_NAMES`. The package root exposes the same symbols
+while preserving every locked Phase 1-10 export.
+
+All five arguments must be exact instances of their declared types; wrong
+top-level types and lookalike objects raise `TypeError` before any field is
+read. The evaluator never calls `load_config` and never reads a configuration
+file or an environment variable. After exact-type validation, expected
+lower-phase `FeatureInputError` and `PreprocessingError`, plus expected
+scikit-learn estimator/metric `ValueError` or arithmetic failures, are
+translated to `AdvancedClassificationError` with a fixed phase/context message
+and suppressed exception chaining. Its public message contains no raw value,
+row, object representation, filesystem path, environment value, database URL,
+or credential. Phase 11 domain checks raise that error directly. Unexpected
+programming failures and system-exiting exceptions are not relabeled as input
+errors.
+
+### Locked candidates, dependency, and seed derivation
+
+Phase 11 adds no dependency: it uses the exact `scikit-learn>=1.5,<2`
+environment already locked by Phase 10. The constants are exactly:
+
+```python
+ADVANCED_CLASSIFIER_CONTRACT_VERSION = "roadguard.phase11.v1"
+ADVANCED_CLASSIFIER_RNG_NAMESPACE = 0x5247311
+CANDIDATE_CLASSIFIER_NAMES = ("logistic_l2", "hist_gradient_boosting")
+```
+
+The candidate order above is observable selection provenance and is also the
+final tie-break order. It is not caller configurable. For candidate index zero
+or one in that exact order, the evaluator derives exactly one built-in `int`
+seed from:
+
+```python
+int(
+    np.random.SeedSequence(
+        [config.seed, ADVANCED_CLASSIFIER_RNG_NAMESPACE, candidate_index]
+    ).generate_state(1, dtype=np.uint32)[0]
+)
+```
+
+It passes that derived seed as `random_state` to the corresponding constructor.
+There is no public seed argument, global RNG use, or unseeded stochastic
+operation. The supplied `RoadGuardConfig` is not returned, persisted, or
+rendered. Only `config.seed` participates in evaluation; its `env`,
+`data_dir`, `artifacts_dir`, and `database_url` fields are ignored and cannot
+change a result. After exact top-level type validation, the evaluator reads
+only `config.seed`, requires its exact built-in type to be `int` (not `bool`
+or a subclass) and its value to be at least one. A forged or invalid seed
+raises `AdvancedClassificationError` with a fixed configuration-seed message;
+no other config field is validated, read, or represented in an error.
+
+The `logistic_l2` candidate is exactly:
+
+```python
+LogisticRegression(
+    C=1.0,
+    penalty="l2",
+    solver="lbfgs",
+    max_iter=1000,
+    tol=1e-8,
+    fit_intercept=True,
+    class_weight=None,
+    random_state=derived_seed,
+)
+```
+
+The `hist_gradient_boosting` candidate is exactly:
+
+```python
+HistGradientBoostingClassifier(
+    learning_rate=0.05,
+    max_iter=100,
+    max_leaf_nodes=15,
+    l2_regularization=1.0,
+    early_stopping=False,
+    random_state=derived_seed,
+)
+```
+
+No caller-supplied estimator, parameter, feature matrix, threshold, or seed
+is accepted. There is no grid/random/Bayesian search, cross-validation,
+resampling, class weighting, calibration, clipping, or candidate beyond this
+two-element set. The locked numerical-library versions in `uv.lock` bound
+reproducibility.
+
+### Input, provenance, and temporal boundary
+
+The evaluator deep-copies caller-owned export frames, fresh-runs complete
+cleaned-data validation through `build_feature_frame`, rebuilds the canonical
+`split_chronologically` result, and requires the supplied split to equal it in
+schema, dtypes, keys, dates, values, and partition membership. It calls
+`fit_preprocessor` on the complete canonical split, requires the supplied fit
+to equal the freshly reproduced fit field-for-field, and internally transforms
+train and validation. A caller cannot supply transformed features, a target
+array, a model, a threshold, a seed, or a lookalike input object.
+
+Targets join one-to-one to each transformed partition solely by canonical
+(`segment_id`, `date`) keys, and joined target order must exactly equal key
+order. The sole target is `maintenance_within_30_days`. Keys, both target
+columns, future event keys, `maintenance_history`, costs, materials, latent
+generation fields, and every column outside
+`PreprocessorFit.transformed_feature_columns` are forbidden model features.
+
+Each candidate fits exactly once on the transformed 34-date training partition
+and receives the transformed seven-date validation partition exactly once via
+`predict_proba`. Validation is used only for the candidate records and the
+selection rule below. Only after both candidate records, the selected name,
+and the selected threshold are frozen may the test partition be transformed
+exactly once and passed to one private test-evaluation boundary. The selected
+candidate receives that test matrix exactly once through `predict_proba`; all
+test hard labels and metrics derive solely from that one captured probability
+vector. The loser must never receive a test matrix, produce a test prediction,
+rank, or otherwise consume a test value. There is no public API that accepts a
+fitted candidate and evaluates a test partition again, and no cross-call test
+counter or state.
+
+Changing only test feature/target values in a freshly valid matching export and
+split may change only the selected candidate's test metrics. It cannot change
+either fitted candidate state, any candidate validation record, the selected
+name, threshold, feature schema, or row counts. Changing only validation
+feature/target values may change validation records, selection, threshold, and
+downstream selected-test metrics, but cannot change fitted candidate state or
+the transformed training output. Equivalent shuffled upstream frames followed
+by canonical rebuilding produce equal results for the same exact config and
+locked numerical-library versions. Changing `config.seed` may alter only
+stochastic candidate state and downstream evidence; it never changes source
+validation, split, preprocessing fit, feature schema, or row counts.
+
+### Validation selection and metric semantics
+
+Training, validation, and test targets must each contain exactly integer
+classes `[0, 1]`; the test-class check occurs only inside the frozen private
+test stage. Every `predict_proba` output must be an `ndarray` of shape
+`(partition_rows, 2)`, expose exact class order `[0, 1]`, and convert each
+positive-class scalar exactly once to a finite built-in `float` in `[0.0, 1.0]`.
+Invalid output is rejected, never clipped. `predict` is never used for a
+reported hard-label metric.
+
+For each candidate, threshold candidates are `0.0`, `1.0`, and each distinct
+validation probability; a hard prediction is one when
+`probability >= threshold`. The threshold is ranked by higher validation F1,
+then higher validation recall, then higher threshold. Its candidate record
+contains `average_precision_score` validation PR-AUC on probabilities plus F1
+and recall at that candidate's selected threshold, both with `zero_division=0`.
+
+The selected candidate is the record with higher validation PR-AUC, then higher
+validation F1, then higher validation recall, then earlier position in
+`CANDIDATE_CLASSIFIER_NAMES`. This is the complete ranking: no test metric,
+baseline comparison, threshold value, random draw, or model internals may
+break a tie. The selected candidate's frozen threshold produces test hard
+labels. Test metrics are `accuracy_score`, `precision_score`, `recall_score`,
+and `f1_score` (`zero_division=0` where accepted), `roc_auc_score` on positive
+probabilities, and `confusion_matrix(labels=(0, 1))` stored as
+`((true_negative, false_positive), (false_negative, true_positive))`.
+
+All returned metrics and thresholds are finite built-in `float`s; counts are
+exact built-in `int`s. Each validation PR-AUC/F1/recall and each test
+accuracy/precision/recall/F1/ROC-AUC is in `[0.0, 1.0]`. The test confusion
+matrix is exactly a two-by-two tuple of built-in non-negative `int`s whose sum
+equals `test_rows`. Malformed shape, unexpected class ordering, invalid
+estimator output, invalid metric output, out-of-range metric, or non-finite
+metric raises `AdvancedClassificationError`; no partial result is returned.
+
+### Frozen result schema
+
+All result types are `@dataclass(frozen=True)` and expose no mutable frame,
+array, estimator, mapping, prediction, seed, configuration, or caller-owned
+object. Their fields and order are exactly:
+
+```python
+CandidateValidationMetrics(
+    classifier_name: str,
+    validation_pr_auc: float,
+    decision_threshold: float,
+    validation_f1: float,
+    validation_recall: float,
+)
+
+TestClassificationMetrics(
+    accuracy: float,
+    precision: float,
+    recall: float,
+    f1: float,
+    roc_auc: float,
+    confusion_matrix: tuple[tuple[int, int], tuple[int, int]],
+)
+
+AdvancedClassificationEvaluation(
+    contract_version: str,
+    selected_classifier_name: str,
+    feature_columns: tuple[str, ...],
+    train_rows: int,
+    validation_rows: int,
+    test_rows: int,
+    candidates: tuple[CandidateValidationMetrics, CandidateValidationMetrics],
+    test: TestClassificationMetrics,
+)
+```
+
+`contract_version` equals `ADVANCED_CLASSIFIER_CONTRACT_VERSION`, candidate
+records preserve the exact locked order, `selected_classifier_name` equals the
+`classifier_name` of exactly one candidate record, and `feature_columns`
+equals the reproduced `PreprocessorFit.transformed_feature_columns`. V1 row
+counts are exactly 10,200/2,100/2,100. Results contain no model, model parameters, coefficients,
+feature importance, calibration claim, risk score/band, artifact path,
+timestamp, environment detail, database credential, train metric, raw
+prediction, or test-derived selection evidence.
+
+### Failure, testing, and scope boundary
+
+Invalid schemas/dtypes/keys/dates/values, duplicate or missing keys, target
+misalignment, forged partition membership or preprocessing state, invalid
+config seed, null/non-finite features, invalid targets, degenerate
+classification partitions, invalid seed derivation, invalid estimator output, or
+non-finite metrics fail contextually without mutating caller-owned objects.
+
+RED-first tests must cover the absent public module before implementation;
+exact public/package surface and frozen schema; both exact constructors and
+derived seeds; direct scikit-learn known-vector metric comparisons; every
+threshold tie-break; candidate selection PR-AUC, F1, recall, and fixed-order
+tie-breaks; exact train-only fit inputs; validation-only selection; one private
+selected-only test stage with exactly one test transform, exactly one selected
+`predict_proba` call, and no loser test call; shuffled-input and same-config
+determinism; changed-seed and ignored-config-field boundaries; caller
+immutability; target/key alignment; every forbidden-field class; forged
+export/split/fit/config-seed/lookalike inputs;
+malformed, non-finite, and out-of-range probabilities; invalid metric output;
+out-of-range score/confusion-matrix output; single-class partitions; and a
+complete V1 evaluation. The V1 test asserts schema, row counts, finite/ranged
+metrics, and reproducibility; it does not
+lock performance values, require either candidate to win, or claim superiority
+over Phase 10 baselines.
+
+Phase 11 is in-memory and introduces no direct PostgreSQL or filesystem I/O;
+the existing full-suite PostgreSQL tests remain a cross-phase gate. It does not
+perform advanced regression, artifact/model persistence or registration, risk
+mapping, material forecasting, optimization, inference, explainability,
+API/dashboard/container work, or any Phase 12+ behavior.
