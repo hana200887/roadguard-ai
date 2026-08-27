@@ -47,7 +47,7 @@ different remote history.
 | 7 | Point-in-time feature registry and generation | Frozen target-free feature frame | published |
 | 8 | Chronological splitting and train-only preprocessing | 34/7/7 split and fitted transforms | published |
 | 9 | Exploratory analysis and data card | Read-only reproducible EDA evidence | published |
-| 10 | Baseline supervised evaluation | Baseline classifier/regressor metrics | accepted-local |
+| 10 | Baseline supervised evaluation | Baseline classifier/regressor metrics | published |
 | 11 | Advanced classification | Validation-selected classifier | planned |
 | 12 | Advanced regression | Validation-selected regressor | planned |
 | 13 | Frozen selection, artifacts, and risk mapping | Manifested selected artifacts and risk output | planned |
