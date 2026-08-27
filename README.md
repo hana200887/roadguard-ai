@@ -165,12 +165,12 @@ Phase 9 (train-only EDA and deterministic data card) is published:
 - The phase does not fit or apply preprocessing, train models, or persist
   artifacts.
 
-The Phase 10 baseline-supervised-evaluation contract is frozen; implementation
-has not started. It locks a deterministic training-prior dummy classifier and
-training-median dummy regressor, validation-only threshold selection, one
-frozen test evaluation, and immutable metrics. Feature-dependent models and
-other advanced models, model artifacts, API, dashboard, and Docker services
-remain future phases.
+The Phase 10 baseline-supervised-evaluation implementation is accepted
+locally pending publication. It provides a deterministic training-prior dummy
+classifier and training-median dummy regressor, validation-only threshold
+selection, one frozen test evaluation, and immutable metrics.
+Feature-dependent models and other advanced models, model artifacts, API,
+dashboard, and Docker services remain future phases.
 
 ## Quickstart
 
