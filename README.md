@@ -191,8 +191,8 @@ atomic content-addressed local artifacts, canonical manifests, and target-free
 test risk rows. Model loading/registry, live inference, forecasting,
 optimization, explainability, and all Phase 14+ work remain future phases.
 
-The Phase 14 network-month material-forecasting contract is now defined;
-implementation remains planned. It requires complete realized-history
+Phase 14 network-month material forecasting is now under RED-first
+implementation. It requires complete realized-history
 evidence, a separate expanding rolling-origin timeline, deterministic
 per-material selection, one frozen test pass, and four next-month forecast
 rows. Persistence, maintenance optimization, inference, explainability, and

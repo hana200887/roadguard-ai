@@ -16,10 +16,11 @@ import sqlalchemy as sa
 from pandas.testing import assert_frame_equal
 from sqlalchemy import event
 from sqlalchemy.engine import Engine
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
 import roadguard._db_etl as db_etl
-from roadguard._db_models import DB_SCHEMA, metadata
+import roadguard._db_repository as db_repository
+from roadguard._db_models import DB_SCHEMA, MAINTENANCE_HISTORY_COLUMNS, metadata
 from roadguard._dq_cleaning import CleaningResult
 from roadguard._dq_validation import ValidationIssue, ValidationReport
 from roadguard.contracts import DatasetSpec
@@ -421,6 +422,83 @@ def test_material_aggregation_uses_only_realized_history(
     assert (aggregated["quantity"] >= 0).all()
 
 
+def test_phase14_combined_export_returns_exact_frames_and_never_reads_material_forecasts(
+    pg_engine: Engine,
+    cleaned_result: CleaningResult,
+    dataset_spec: DatasetSpec,
+    maintenance_history: pd.DataFrame,
+) -> None:
+    load_cleaning_result(
+        pg_engine,
+        cleaned_result,
+        dataset_spec,
+        maintenance_history=maintenance_history,
+    )
+    statements: list[str] = []
+    select_isolation_levels: list[str] = []
+
+    def collect_sql(
+        connection: sa.Connection,
+        _cursor: object,
+        statement: str,
+        _parameters: object,
+        _context: object,
+        _executemany: bool,
+    ) -> None:
+        statements.append(statement)
+        if statement.lstrip().upper().startswith("SELECT"):
+            select_isolation_levels.append(connection.get_isolation_level())
+
+    event.listen(pg_engine, "after_cursor_execute", collect_sql)
+    try:
+        exported, history = PostgresRepository(pg_engine).export_material_forecast_inputs()
+    finally:
+        event.remove(pg_engine, "after_cursor_execute", collect_sql)
+
+    assert tuple(exported.segments.columns) == (
+        "segment_id",
+        "province",
+        "road_type",
+        "construction_date",
+        "road_length_km",
+    )
+    assert tuple(exported.observations.columns) == OBSERVATION_COLUMNS
+    assert tuple(exported.targets.columns) == TARGET_COLUMNS
+    assert tuple(exported.maintenance_events.columns) == EVENT_COLUMNS
+    assert tuple(history.columns) == MAINTENANCE_HISTORY_COLUMNS
+    assert history["segment_id"].dtype == object
+    assert str(history["maintenance_date"].dtype) == "datetime64[ns]"
+    assert history["maintenance_cost"].dtype == "int64"
+    assert history["traffic_sign_quantity"].dtype == "int64"
+    assert all(history[material].dtype == "float64" for material in MATERIAL_COLUMNS[1:-1])
+    assert history.equals(
+        history.sort_values(["segment_id", "maintenance_date"], kind="stable").reset_index(
+            drop=True
+        )
+    )
+    assert all("material_forecasts" not in statement.lower() for statement in statements)
+    assert any(statement.strip().upper() == "SET TRANSACTION READ ONLY" for statement in statements)
+    assert select_isolation_levels and set(select_isolation_levels) == {"REPEATABLE READ"}
+
+
+def test_phase14_combined_export_preserves_empty_history_dtypes(
+    pg_engine: Engine,
+    cleaned_result: CleaningResult,
+    dataset_spec: DatasetSpec,
+) -> None:
+    load_cleaning_result(pg_engine, cleaned_result, dataset_spec)
+
+    _exported, history = PostgresRepository(pg_engine).export_material_forecast_inputs()
+
+    assert history.empty
+    assert tuple(history.columns) == MAINTENANCE_HISTORY_COLUMNS
+    assert history["segment_id"].dtype == object
+    assert str(history["maintenance_date"].dtype) == "datetime64[ns]"
+    assert history["maintenance_cost"].dtype == "int64"
+    assert history["traffic_sign_quantity"].dtype == "int64"
+    assert all(history[material].dtype == "float64" for material in MATERIAL_COLUMNS[1:-1])
+
+
 def test_invalid_cleaning_report_is_rejected_before_database_write(
     pg_engine: Engine,
     cleaned_result: CleaningResult,
@@ -762,6 +840,64 @@ def test_export_uses_one_repeatable_read_snapshot(
     assert exported.observations.empty
     assert exported.targets.empty
     assert exported.maintenance_events.empty
+
+
+def test_phase14_combined_export_uses_one_snapshot_across_export_and_history(
+    pg_engine: Engine,
+    cleaned_result: CleaningResult,
+    dataset_spec: DatasetSpec,
+    maintenance_history: pd.DataFrame,
+) -> None:
+    state = {"loaded": False}
+
+    def load_after_first_select(
+        _connection: object,
+        _cursor: object,
+        statement: str,
+        _parameters: object,
+        _context: object,
+        _executemany: bool,
+    ) -> None:
+        if not state["loaded"] and statement.lstrip().upper().startswith("SELECT"):
+            state["loaded"] = True
+            load_cleaning_result(
+                pg_engine,
+                cleaned_result,
+                dataset_spec,
+                maintenance_history=maintenance_history,
+            )
+
+    event.listen(pg_engine, "after_cursor_execute", load_after_first_select)
+    try:
+        exported, history = PostgresRepository(pg_engine).export_material_forecast_inputs()
+    finally:
+        event.remove(pg_engine, "after_cursor_execute", load_after_first_select)
+
+    assert state["loaded"]
+    assert exported.segments.empty
+    assert exported.observations.empty
+    assert exported.targets.empty
+    assert exported.maintenance_events.empty
+    assert history.empty
+
+
+def test_phase14_combined_export_sanitizes_sqlalchemy_failure(
+    pg_engine: Engine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    original = SQLAlchemyError("postgresql://user:credential@host/private")
+
+    def fail_read(*_args: object, **_kwargs: object) -> pd.DataFrame:
+        raise original
+
+    monkeypatch.setattr(db_repository, "_read_frame", fail_read)
+    with pytest.raises(
+        PersistenceError,
+        match="^PostgreSQL material forecast input export failed$",
+    ) as exc_info:
+        PostgresRepository(pg_engine).export_material_forecast_inputs()
+
+    assert str(exc_info.value) == "PostgreSQL material forecast input export failed"
+    assert exc_info.value.__cause__ is original
 
 
 def test_hostile_realized_scalars_and_labels_fail_safely(

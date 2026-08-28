@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 from typing import cast
 
 import pytest
@@ -10,6 +11,7 @@ from roadguard._db_models import DB_SCHEMA, metadata, road_observations
 from roadguard.config import RoadGuardConfig
 from roadguard.database import (
     DatabaseConfigurationError,
+    PostgresRepository,
     create_database_engine,
 )
 from roadguard.observations import OBSERVATION_COLUMNS
@@ -75,6 +77,14 @@ def test_metadata_has_exact_phase6_tables_in_fixed_schema() -> None:
 def test_observation_table_contains_only_approved_feature_columns() -> None:
     assert tuple(road_observations.c.keys()) == OBSERVATION_COLUMNS
     assert set(TARGET_COLUMNS[2:]).isdisjoint(road_observations.c.keys())
+
+
+def test_phase14_combined_material_forecast_snapshot_is_an_additive_repository_api() -> None:
+    """The pure forecasting workflow receives this pair, never an engine."""
+    method = PostgresRepository.export_material_forecast_inputs
+
+    assert str(inspect.signature(method)) == "(self) -> 'tuple[RepositoryExport, pd.DataFrame]'"
+    assert callable(method)
 
 
 def test_metadata_uses_natural_keys_and_required_foreign_keys() -> None:
