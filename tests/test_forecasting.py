@@ -23,28 +23,14 @@ from typing import cast
 import numpy as np
 import pandas as pd
 import pytest
-import roadguard.forecasting as forecasting
 from pandas.testing import assert_frame_equal
-from roadguard.forecasting import (
-    FORECAST_CANDIDATE_NAMES,
-    FORECAST_HORIZON_MONTHS,
-    FORECAST_MATERIAL_NAMES,
-    FROZEN_TEST_ORIGIN_COUNT,
-    INITIAL_TRAIN_MONTHS,
-    MATERIAL_FORECAST_CONTRACT_VERSION,
-    ForecastCandidateMetrics,
-    MaterialForecast,
-    MaterialForecastError,
-    MaterialForecastEvaluation,
-    MaterialForecastMetrics,
-    forecast_materials,
-)
 
 import roadguard
 import roadguard._artifact_io as artifact_io
 import roadguard.artifacts as artifacts
 import roadguard.config as config
 import roadguard.database as database
+import roadguard.forecasting as forecasting
 import roadguard.preprocessing as preprocessing
 from roadguard import (
     DatasetSpec,
@@ -59,6 +45,20 @@ from roadguard import (
 from roadguard._db_models import MAINTENANCE_HISTORY_COLUMNS
 from roadguard.contracts import V1_OBSERVATION_START
 from roadguard.events import EVENT_COLUMNS
+from roadguard.forecasting import (
+    FORECAST_CANDIDATE_NAMES,
+    FORECAST_HORIZON_MONTHS,
+    FORECAST_MATERIAL_NAMES,
+    FROZEN_TEST_ORIGIN_COUNT,
+    INITIAL_TRAIN_MONTHS,
+    MATERIAL_FORECAST_CONTRACT_VERSION,
+    ForecastCandidateMetrics,
+    MaterialForecast,
+    MaterialForecastError,
+    MaterialForecastEvaluation,
+    MaterialForecastMetrics,
+    forecast_materials,
+)
 
 SPEC = DatasetSpec(dataset_segments=3, dataset_months_per_segment=48, dataset_observations=144)
 PUBLIC_NAMES = (
@@ -110,7 +110,7 @@ def _history_frame(
             # The first material proves canonical math.fsum rather than sum.
             "thermoplastic_paint_kg": (1e16, 1.0, 1.0)[rank],
             "reflective_sheet_m2": float(max(period_index, 0) + rank),
-            "guardrail_meter": float((max(period_index, 0) + rank) % 5),
+            "guardrail_meter": float(10 + (max(period_index, 0) + rank) % 5),
             "traffic_sign_quantity": rank + 1,
         }
         if zero_day_20 and event_date.day == 20:
@@ -157,7 +157,9 @@ def _build_dataset(
         event_rows.append(
             {
                 "segment_id": cast(str, segments.iloc[0]["segment_id"]),
-                "maintenance_date": observation_months[12].replace(day=20),
+                "maintenance_date": _next_month(_next_month(observation_months[-1])).replace(
+                    day=20
+                ),
             }
         )
     events = pd.DataFrame(event_rows, columns=EVENT_COLUMNS)
@@ -198,16 +200,17 @@ def _canonical_history(
     rows: list[tuple[date, str, float]] = []
     ordered = history.sort_values(["segment_id", "maintenance_date"], kind="stable")
     for month in months:
+        month_date = month.date()
         active = ordered.loc[
             ordered["maintenance_date"].dt.date.map(
-                lambda value, active_month=month: (
+                lambda value, active_month=month_date: (
                     value.year == active_month.year and value.month == active_month.month
                 )
             )
         ]
         for material in FORECAST_MATERIAL_NAMES:
             value = float(math.fsum(float(item) for item in active[material].tolist()))
-            rows.append((month, material, 0.0 if value == 0.0 else value))
+            rows.append((month_date, material, 0.0 if value == 0.0 else value))
     return tuple(rows)
 
 
@@ -242,11 +245,11 @@ def _expected_fingerprint(
         "columns": ["period", "material", "quantity"],
         "contract": MATERIAL_FORECAST_CONTRACT_VERSION,
         "forecast_horizon_months": FORECAST_HORIZON_MONTHS,
-        "history_end": months[-1].isoformat(),
+        "history_end": months[-1].date().isoformat(),
         "history_rows": [
             [period.isoformat(), material, quantity.hex()] for period, material, quantity in rows
         ],
-        "history_start": months[0].isoformat(),
+        "history_start": months[0].date().isoformat(),
         "initial_train_months": INITIAL_TRAIN_MONTHS,
         "materials": list(FORECAST_MATERIAL_NAMES),
         "spec": {
@@ -254,8 +257,8 @@ def _expected_fingerprint(
             "dataset_observations": spec.dataset_observations,
             "dataset_segments": spec.dataset_segments,
         },
-        "test_origins": [item.isoformat() for item in test],
-        "validation_origins": [item.isoformat() for item in validation],
+        "test_origins": [item.date().isoformat() for item in test],
+        "validation_origins": [item.date().isoformat() for item in validation],
     }
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode(
         "utf-8"
@@ -413,8 +416,12 @@ def test_v1_calendar_completeness_densification_and_canonical_fsum(
     assert result.history_start == date(2022, 1, 1)
     assert result.history_end == date(2025, 12, 1)
     assert result.forecast_period == date(2026, 1, 1)
-    assert result.validation_origins == tuple(observation_dates(48, V1_OBSERVATION_START)[24:41])
-    assert result.test_origins == tuple(observation_dates(48, V1_OBSERVATION_START)[41:])
+    assert result.validation_origins == tuple(
+        item.date() for item in observation_dates(48, V1_OBSERVATION_START)[24:41]
+    )
+    assert result.test_origins == tuple(
+        item.date() for item in observation_dates(48, V1_OBSERVATION_START)[41:]
+    )
     assert tuple(metric.material for metric in result.material_metrics) == FORECAST_MATERIAL_NAMES
     assert tuple(forecast.material for forecast in result.forecasts) == FORECAST_MATERIAL_NAMES
     assert tuple(forecast.period for forecast in result.forecasts) == (date(2026, 1, 1),) * 4
@@ -470,6 +477,11 @@ def test_rolling_origin_prefixes_selection_freeze_and_single_selected_test_pass(
 def test_metrics_formulas_per_material_and_candidate_order_tie_break(
     dataset: RepositoryExport, history: pd.DataFrame
 ) -> None:
+    assert forecasting._metrics((0.0, 2.0), (1.0, 0.0)) == (
+        1.5,
+        math.sqrt(2.5),
+    )
+
     result = forecast_materials(dataset, history, SPEC)
     canonical = _canonical_history(dataset, history)
     for metric in result.material_metrics:
@@ -507,6 +519,33 @@ def test_metrics_formulas_per_material_and_candidate_order_tie_break(
         == ("seasonal_naive_12",) * 4
     )
     assert tuple(item.forecast_quantity for item in zero.forecasts) == (0.0,) * 4
+
+
+def test_equal_validation_mae_uses_lower_rmse_before_candidate_order(
+    dataset: RepositoryExport,
+    history: pd.DataFrame,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    zero_history = history.copy(deep=True)
+    for material in FORECAST_MATERIAL_NAMES:
+        zero_history[material] = 0 if material == "traffic_sign_quantity" else 0.0
+
+    def tied_mae_candidate(name: str, prefix: tuple[float, ...]) -> float:
+        if name == "trailing_mean_3":
+            return 1.0
+        validation_offset = len(prefix) - INITIAL_TRAIN_MONTHS
+        if validation_offset == 16:
+            return 1.0
+        return 0.0 if validation_offset % 2 == 0 else 2.0
+
+    monkeypatch.setattr(forecasting, "_candidate_forecast", tied_mae_candidate)
+    result = forecast_materials(dataset, zero_history, SPEC)
+
+    for metrics in result.material_metrics:
+        seasonal, trailing = metrics.candidates
+        assert seasonal.validation_mae == trailing.validation_mae == 1.0
+        assert seasonal.validation_rmse > trailing.validation_rmse
+        assert metrics.selected_candidate_name == "trailing_mean_3"
 
 
 def test_exact_input_types_columns_calendar_and_complete_history_are_required(
@@ -602,9 +641,16 @@ def test_scalar_rules_cost_isolation_outside_window_and_caller_immutability(
     cost_changed = history.copy(deep=True)
     cost_changed["maintenance_cost"] += 7
     assert forecast_materials(dataset, cost_changed, SPEC) == baseline
+    built_in_dates = history.copy(deep=True)
+    built_in_dates["maintenance_date"] = pd.Series(
+        (value.date() for value in history["maintenance_date"]),
+        dtype=object,
+    )
+    assert forecast_materials(dataset, built_in_dates, SPEC) == baseline
     ignored_changed = history.copy(deep=True)
     ignored_changed.loc[
-        ignored_changed["maintenance_date"].dt.date > baseline.history_end,
+        ignored_changed["maintenance_date"].dt.to_period("M")
+        > pd.Period(baseline.history_end, freq="M"),
         "thermoplastic_paint_kg",
     ] = 999.0
     assert forecast_materials(dataset, ignored_changed, SPEC) == baseline
@@ -625,6 +671,46 @@ def test_scalar_rules_cost_isolation_outside_window_and_caller_immutability(
         invalid.iloc[0, invalid.columns.get_loc(column)] = value
         with pytest.raises(MaterialForecastError, match="^Phase 14 input validation failed\\.$"):
             forecast_materials(dataset, invalid, SPEC)
+
+
+@pytest.mark.parametrize(
+    "column",
+    ("thermoplastic_paint_kg", "traffic_sign_quantity"),
+)
+def test_huge_material_integers_fail_as_sanitized_input_errors(
+    dataset: RepositoryExport,
+    history: pd.DataFrame,
+    column: str,
+) -> None:
+    invalid = history.copy(deep=True)
+    invalid[column] = invalid[column].astype(object)
+    invalid.iloc[0, invalid.columns.get_loc(column)] = 10**400
+
+    with pytest.raises(
+        MaterialForecastError,
+        match="^Phase 14 input validation failed\\.$",
+    ) as exc_info:
+        forecast_materials(dataset, invalid, SPEC)
+
+    assert exc_info.value.__cause__ is None
+
+
+def test_fingerprint_failures_use_the_locked_input_error_boundary(
+    dataset: RepositoryExport,
+    history: pd.DataFrame,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_fingerprint(_prepared: object) -> str:
+        raise ValueError("dynamic fingerprint detail")
+
+    monkeypatch.setattr(forecasting, "_forecast_fingerprint", fail_fingerprint)
+    with pytest.raises(
+        MaterialForecastError,
+        match="^Phase 14 input validation failed\\.$",
+    ) as exc_info:
+        forecast_materials(dataset, history, SPEC)
+
+    assert exc_info.value.__cause__ is None
 
 
 @pytest.mark.parametrize("returned", [-1.0, float("nan"), float("inf"), 1, True])
