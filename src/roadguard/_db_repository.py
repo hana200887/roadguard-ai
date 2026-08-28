@@ -15,6 +15,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from roadguard._db_engine import _require_postgresql
 from roadguard._db_models import (
+    MAINTENANCE_HISTORY_COLUMNS,
     MATERIALS,
     maintenance_events,
     maintenance_history,
@@ -102,6 +103,59 @@ class PostgresRepository:
             observations=_normalize_observations(observations),
             targets=_normalize_targets(targets),
             maintenance_events=_normalize_events(events),
+        )
+
+    def export_material_forecast_inputs(self) -> tuple[RepositoryExport, pd.DataFrame]:
+        """Return one repeatable-read snapshot for the Phase 14 pure workflow."""
+        try:
+            with _read_snapshot(self._engine) as connection:
+                segments = _read_frame(
+                    connection,
+                    sa.select(road_segments).order_by(road_segments.c.segment_id),
+                    PUBLIC_SEGMENT_COLUMNS,
+                )
+                observations = _read_frame(
+                    connection,
+                    sa.select(road_observations).order_by(
+                        road_observations.c.segment_id,
+                        road_observations.c.date,
+                    ),
+                    OBSERVATION_COLUMNS,
+                )
+                targets = _read_frame(
+                    connection,
+                    sa.select(observation_targets).order_by(
+                        observation_targets.c.segment_id,
+                        observation_targets.c.date,
+                    ),
+                    TARGET_COLUMNS,
+                )
+                events = _read_frame(
+                    connection,
+                    sa.select(maintenance_events).order_by(
+                        maintenance_events.c.segment_id,
+                        maintenance_events.c.maintenance_date,
+                    ),
+                    EVENT_COLUMNS,
+                )
+                history = _read_frame(
+                    connection,
+                    sa.select(maintenance_history).order_by(
+                        maintenance_history.c.segment_id,
+                        maintenance_history.c.maintenance_date,
+                    ),
+                    MAINTENANCE_HISTORY_COLUMNS,
+                )
+        except SQLAlchemyError as exc:
+            raise PersistenceError("PostgreSQL material forecast input export failed") from exc
+        return (
+            RepositoryExport(
+                segments=_normalize_segments(segments),
+                observations=_normalize_observations(observations),
+                targets=_normalize_targets(targets),
+                maintenance_events=_normalize_events(events),
+            ),
+            _normalize_history(history),
         )
 
     def get_segment_history(self, segment_id: str, as_of_date: date) -> SegmentHistory:
@@ -240,6 +294,17 @@ def _normalize_events(frame: pd.DataFrame) -> pd.DataFrame:
     normalized = frame.copy()
     normalized["segment_id"] = normalized["segment_id"].astype(object)
     normalized["maintenance_date"] = pd.to_datetime(normalized["maintenance_date"])
+    return normalized
+
+
+def _normalize_history(frame: pd.DataFrame) -> pd.DataFrame:
+    normalized = frame.copy()
+    normalized["segment_id"] = normalized["segment_id"].astype(object)
+    normalized["maintenance_date"] = pd.to_datetime(normalized["maintenance_date"])
+    normalized["maintenance_cost"] = normalized["maintenance_cost"].astype("int64")
+    for column in MATERIALS[:-1]:
+        normalized[column] = normalized[column].astype("float64")
+    normalized["traffic_sign_quantity"] = normalized["traffic_sign_quantity"].astype("int64")
     return normalized
 
 
