@@ -188,15 +188,14 @@ Phase 13 frozen selection, artifact publication, and risk mapping is published.
 It provides one private
 train/validation selection orchestration, exact train-fitted winner retention,
 atomic content-addressed local artifacts, canonical manifests, and target-free
-test risk rows. Model loading/registry, live inference, forecasting,
-optimization, explainability, and all Phase 14+ work remain future phases.
+test risk rows. Model loading/registry, live inference, optimization,
+explainability, and all Phase 15+ work remain future phases.
 
-Phase 14 network-month material forecasting is now under RED-first
-implementation. It requires complete realized-history
-evidence, a separate expanding rolling-origin timeline, deterministic
-per-material selection, one frozen test pass, and four next-month forecast
-rows. Persistence, maintenance optimization, inference, explainability, and
-all Phase 15+ work remain future phases.
+Phase 14 network-month material forecasting is published. It provides
+complete realized-history evidence, a separate expanding rolling-origin
+timeline, deterministic per-material selection, one frozen test pass, and
+four next-month forecast rows. Forecast persistence, maintenance optimization,
+inference, explainability, and all Phase 15+ work remain future phases.
 
 ## Quickstart
 
