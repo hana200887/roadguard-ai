@@ -2267,3 +2267,335 @@ filesystem components between an operation-boundary check and use is outside
 the Phase 13 threat model. Phase 13 must still fail closed whenever such a
 replacement is observable at a required boundary; it makes no race-free
 filesystem guarantee against that actor.
+
+## 21. Rolling-origin material forecasting (Phase 14)
+
+Phase 14 is the only V1 workflow that turns complete realized material facts
+into a deterministic next-month network forecast. Its public module is
+`roadguard.forecasting` and its only workflow is:
+
+```python
+forecast_materials(
+    dataset: RepositoryExport,
+    maintenance_history: pd.DataFrame,
+    spec: DatasetSpec,
+) -> MaterialForecastEvaluation
+```
+
+The module `__all__` contains exactly `forecast_materials`,
+`MaterialForecastError`, `ForecastCandidateMetrics`,
+`MaterialForecastMetrics`, `MaterialForecast`,
+`MaterialForecastEvaluation`, and these constants:
+
+```python
+MATERIAL_FORECAST_CONTRACT_VERSION = "roadguard.phase14.v1"
+FORECAST_MATERIAL_NAMES = (
+    "thermoplastic_paint_kg",
+    "reflective_sheet_m2",
+    "guardrail_meter",
+    "traffic_sign_quantity",
+)
+FORECAST_CANDIDATE_NAMES = (
+    "seasonal_naive_12",
+    "trailing_mean_3",
+)
+INITIAL_TRAIN_MONTHS = 24
+FROZEN_TEST_ORIGIN_COUNT = 7
+FORECAST_HORIZON_MONTHS = 1
+```
+
+The package root exposes the same symbols while preserving every locked Phase
+1-13 export. Phase 14 adds no dependency, configuration field, environment
+variable, seed, or RNG use. The pure forecast workflow performs no database
+or external I/O. The only Phase 14 database operation is the additive
+read-only snapshot adapter defined below; Phase 14 performs no database write,
+filesystem operation, artifact/model load, model serialization, or network
+operation.
+
+`MaterialForecastError` is the contextual `ValueError` subclass for invalid
+inputs, completeness, folds, candidate output, metrics, fingerprints, or
+forecast rows. All three arguments must be exact instances of their declared
+types; lookalikes, subclasses, and wrong top-level types raise `TypeError`
+before any field, label, or scalar is read. Expected validation, arithmetic,
+or metric failures are translated at their narrow boundary with suppressed
+exception chaining. Public errors contain no raw value, row, object
+representation, path, environment value, database URL, credential, or SQL.
+The complete allowed public messages are `Phase 14 input validation failed.`,
+`Phase 14 rolling-origin evaluation failed.`, and `Phase 14 forecast output
+failed.` Input/type-adjacent schema, lower-phase validation, completeness,
+normalization, aggregation, calendar, fingerprint, and fold-construction
+failures map to the input message. Candidate dispatch/output or metric
+failures during validation or frozen test map to the rolling-origin message.
+Final candidate dispatch/output, final row construction, or final result
+invariant failures map to the forecast-output message. No dynamic suffix is
+permitted. Unexpected programming failures and system-exiting exceptions are
+not relabeled.
+
+### Authoritative PostgreSQL input snapshot
+
+Phase 14 adds exactly one method to `PostgresRepository`:
+
+```python
+export_material_forecast_inputs() -> tuple[RepositoryExport, pd.DataFrame]
+```
+
+The method reads `road_segments`, `road_observations`,
+`observation_targets`, `maintenance_events`, and `maintenance_history` inside
+one read-only `REPEATABLE READ` transaction. It never composes separately
+timed calls to `export_dataset` and `aggregate_monthly_material_usage`, and it
+never reads or writes `material_forecasts`. The returned `RepositoryExport`
+has the exact existing canonical columns, dtypes, and natural-key ordering.
+The history frame has exactly `MAINTENANCE_HISTORY_COLUMNS`, is ordered by
+(`segment_id`, `maintenance_date`), and has object segment IDs,
+`datetime64[ns]` dates, `int64` cost/sign quantities, and `float64` remaining
+material quantities. Empty history preserves those exact columns and dtypes.
+
+The existing `export_dataset`, history query, and monthly aggregation APIs are
+unchanged. SQLAlchemy failures are raised as `PersistenceError` with exact
+message `PostgreSQL material forecast input export failed` from the original
+exception, matching the locked Phase 6 database-error boundary; no partial
+pair is returned. Real-PostgreSQL tests prove
+one-snapshot behavior under a concurrent committed change. The pure
+`forecast_materials` function accepts the returned pair as its first two
+arguments but never receives a repository or engine and never opens a
+connection. Direct exact frames remain valid for deterministic unit fixtures,
+subject to the same complete validation.
+
+### Immutable result schemas
+
+All result types are frozen dataclasses. `ForecastCandidateMetrics` fields are
+exactly `candidate_name`, `validation_mae`, and `validation_rmse`.
+`MaterialForecastMetrics` fields are exactly `material`, `candidates`,
+`selected_candidate_name`, `test_mae`, and `test_rmse`; `candidates` is the
+two-record tuple in `FORECAST_CANDIDATE_NAMES` order.
+`MaterialForecast` fields are exactly `period`, `material`, and
+`forecast_quantity`. `MaterialForecastEvaluation` fields are exactly:
+
+```text
+contract_version
+forecast_input_fingerprint
+history_start
+history_end
+forecast_period
+validation_origins
+test_origins
+material_metrics
+forecasts
+```
+
+Dates are built-in `date` values. Names are exact strings from the locked
+tuples. Quantities and metrics are finite built-in `float` values and are
+non-negative. `material_metrics` and `forecasts` each contain exactly four
+records in `FORECAST_MATERIAL_NAMES` order. All nested collections are tuples;
+no caller frame, mutable mapping, estimator, fold target, per-origin
+prediction, database object, or internal array is exposed.
+
+### Exact input and completeness boundary
+
+`spec` is fresh-revalidated from its public fields and must have at least 32
+months, because 24 initial months, at least one validation origin, and seven
+frozen test origins are mandatory. The workflow deep-copies all four exact
+`RepositoryExport` frames and fresh-runs the complete locked cleaned-data
+validation against that spec. A stale/forged export, report-equivalent
+lookalike, missing event, inconsistent point-in-time observation field, or
+inconsistent target fails before forecast aggregation. Validation may inspect
+supervised values solely to authenticate the lower-phase contract; after this
+boundary, Phase 14 never projects, aggregates, hashes, scores, predicts from,
+or returns an observation, supervised target, or segment attribute.
+
+Fresh lower-phase validation is necessary but not sufficient for the Phase 14
+calendar. The sorted unique authenticated observation-date tuple must equal
+`observation_dates(spec.dataset_months_per_segment, V1_OBSERVATION_START)`
+exactly. A consecutive first-of-month calendar shifted to any other start is
+rejected rather than mapped onto the V1 history window. This exact calendar
+check occurs before event/history filtering and is covered by a shifted-frame
+RED test.
+
+The history window begins at `V1_OBSERVATION_START` and contains exactly
+`spec.dataset_months_per_segment` consecutive calendar months. `history_end`
+is the first day of the final month and `forecast_period` is the first day of
+the immediately following month.
+
+The authenticated event frame has exactly `EVENT_COLUMNS` in order.
+`maintenance_history` has exactly `MAINTENANCE_HISTORY_COLUMNS` in order.
+Labels must be exact built-in strings with no duplicate-label trick. The
+history frame is deep-copied before normalization. Keys are exact ASCII
+segment IDs and timezone-free built-in dates or midnight timezone-free
+`Timestamp` values. Duplicate natural keys are rejected. Every history key,
+including a key outside the forecast window, must belong to the authenticated
+event frame.
+
+Inside the history window, the event-key set and realized-history key set must
+be exactly equal. This deliberately strengthens the Phase 6 optional-history
+boundary for Phase 14: a missing accounting row is incomplete evidence and is
+never interpreted as zero. Events/history before `history_start` or after
+`history_end` are validated but ignored and cannot change any Phase 14 return
+value or call.
+
+`maintenance_cost` is an exact positive built-in integer. The sign quantity is
+an exact non-negative built-in integer. The other three material quantities
+are exact built-in `int` or `float` values, excluding booleans, converted once
+to finite non-negative floats. Phase 14 validates cost for record integrity
+but never projects, aggregates, hashes, predicts from, or returns it. Changing
+only a valid cost cannot change any result.
+
+After completeness is proven, in-window realized rows are first sorted by
+(`segment_id`, `maintenance_date`). Each row is assigned to the first day of
+its event's calendar month. For each (`period`, `material`) group, values are
+converted to built-in floats in that canonical row order and summed exactly
+with `math.fsum`; the result is converted once to a built-in float and
+negative zero is normalized to positive zero. In particular, the exact sign
+count is converted once from built-in integer to float before `math.fsum`.
+The workflow then constructs exactly one row for every
+(`period`, `material`) pair in the history window. A missing pair at this
+stage is a proven zero because every in-window event has complete realized
+facts. All-zero histories and zero quantities are valid. Canonical history is
+sorted by (`period`, `material`), contains exactly four materials for every
+period, and has columns exactly `period`, `material`, and `quantity`. For V1
+this is 48 periods and 192 rows. Segment identity, event count, event day,
+cost, supervised observations/targets, and Phase 13 artifacts/risk rows are
+not forecast inputs.
+
+### Separate expanding rolling-origin protocol
+
+The supervised 34/7/7 split is never imported, reproduced, or inspected.
+Phase 14 uses one-step expanding rolling origins over each canonical material
+series. Period index is zero-based over the accepted history:
+
+- indices `0..23` are the initial 24-month prefix;
+- validation target indices are `24..(month_count - 8)` inclusive;
+- frozen test target indices are `(month_count - 7)..(month_count - 1)`;
+- the final forecast target index is `month_count`.
+
+V1 therefore has 17 validation origins (indices 24 through 40), seven frozen
+test origins (41 through 47), and one final forecast for index 48. Every
+candidate prediction for target index `t` receives only quantities at indices
+strictly below `t`. Earlier validation actuals may enter later validation
+prefixes. Selection freezes after all validation predictions and before any
+test-candidate call. During the single test pass, only the selected candidate
+for that material predicts each of its seven origins. An earlier test actual
+may enter a later test prefix only after its period has elapsed; this is the
+locked operational walk-forward protocol, not candidate reselection. Test
+values never change candidate metrics or names. After test metrics are fixed,
+the selected candidate uses the complete accepted history once to forecast
+the immediately following month.
+
+Changing or appending any valid event/history value after a fold's target
+period cannot change that fold's candidate input or prediction. Changing only
+the seven frozen test quantities may change test metrics and the final
+forecast, but cannot change validation metrics or selected names. Changing
+only the final history month cannot change any earlier-origin prediction.
+
+### Candidates, metrics, and selection
+
+Selection is independent per material; raw errors in kg, m2, metres, and count
+are never added, averaged, weighted, or compared across materials. Candidate
+order and formulas are exact:
+
+1. `seasonal_naive_12` returns the quantity exactly 12 indices before the
+   target.
+2. `trailing_mean_3` returns `math.fsum` of the last three prefix quantities
+   divided by `3.0`.
+
+Candidates have no learned preprocessing, fit state, parameter search,
+seasonality inference, clipping, rounding, random seed, or fallback. Each
+candidate is called exactly once per validation origin and material. The
+selected candidate alone is called exactly once per frozen test origin and
+once for the final forecast. A returned scalar must be an exact built-in
+`float`, finite and non-negative; invalid output fails rather than being
+clipped or replaced.
+
+Every candidate call, including the final forecast, is routed at call time
+through the exact private seam
+`_candidate_forecast(candidate_name: str, prefix: tuple[float, ...]) -> float`.
+The seam dispatches only the two locked names. It returns
+`float(prefix[-12])` for seasonal naive and
+`float(math.fsum(prefix[-3:]) / 3.0)` for trailing mean, normalizing negative
+zero to positive zero. Tests monkeypatch this seam to inspect immutable prefix
+values, stage ordering, candidate names, exact call counts, and invalid
+outputs; no function tuple may capture an unpatchable stale reference.
+
+For an ordered actual vector `y` and forecast vector `p` of length `n`, metrics
+use these exact formulas after every scalar has passed validation:
+
+```text
+MAE  = math.fsum(abs(y_i - p_i) for i in range(n)) / n
+RMSE = math.sqrt(math.fsum((y_i - p_i) ** 2 for i in range(n)) / n)
+```
+
+Each result is converted once to a finite non-negative built-in float.
+Validation ranking is lower MAE, then lower RMSE, then the earlier index in
+`FORECAST_CANDIDATE_NAMES`. Test MAE/RMSE never affect selection. A valid
+all-zero series deterministically selects `seasonal_naive_12` by the final
+tie-break and forecasts zero. Forecast quantities remain floats, including
+for `traffic_sign_quantity`, matching the locked database output schema.
+
+### Canonical forecast-input fingerprint
+
+`forecast_input_fingerprint` is lowercase SHA-256 over UTF-8 canonical JSON
+with sorted object keys, compact separators `(',', ':')`, ASCII escaping, and
+non-finite values forbidden. Dates use `YYYY-MM-DD`; strings remain strings;
+integers remain JSON integers; finite floats use lowercase `float.hex()` with
+negative zero normalized to positive zero. Its payload is exactly:
+
+```json
+{
+  "candidates": [
+    {"lag_months": 12, "name": "seasonal_naive_12"},
+    {"name": "trailing_mean_3", "window_months": 3}
+  ],
+  "columns": ["period", "material", "quantity"],
+  "contract": "roadguard.phase14.v1",
+  "forecast_horizon_months": 1,
+  "history_end": "YYYY-MM-DD",
+  "history_rows": [["canonical scalar"]],
+  "history_start": "YYYY-MM-DD",
+  "initial_train_months": 24,
+  "materials": ["FORECAST_MATERIAL_NAMES"],
+  "spec": {
+    "dataset_months_per_segment": 0,
+    "dataset_observations": 0,
+    "dataset_segments": 0
+  },
+  "test_origins": ["YYYY-MM-DD"],
+  "validation_origins": ["YYYY-MM-DD"]
+}
+```
+
+Real constants, spec integers, dates, material strings, and canonical rows
+replace the placeholders. The fingerprint excludes segment IDs, event days,
+event counts, cost, ignored out-of-window rows, metrics, selections,
+predictions, forecasts, paths, configuration, environment, and database
+state. Equivalent shuffled input and different valid row-index types reproduce
+the same fingerprint and complete result.
+
+### Isolation, RED tests, and scope
+
+RED-first tests must cover the absent module/API; exact exports, signatures,
+constants, frozen schemas, and package surface; exact input types/columns;
+complete event-to-history coverage and missing-versus-proven-zero behavior;
+natural keys, costs, material scalar rules, window boundaries, month
+aggregation, four-series densification, and canonical ordering; minimum month
+count, exact V1-start observation calendar, shifted-calendar rejection, and
+exact validation/test/final origins; exact candidate formulas and
+call counts; prefix-only validation, frozen per-material selection, one
+selected-only test pass, and final forecast ordering; known manual metric and
+tie vectors; no cross-unit aggregation; all-zero histories; negative and
+non-finite candidate traps; V1 192-row history and four-row forecast;
+fingerprint bytes and sensitivity/isolation; shuffle/index invariance; caller
+immutability; hostile labels/scalars/frame subclasses; sanitized errors; and
+poisoned environment, configuration, database, filesystem, artifact,
+supervised-split, Phase 13 load, and RNG entry points around the pure workflow.
+Separate unit and real-PostgreSQL tests cover the exact combined-snapshot
+adapter, dtypes/order, empty history, concurrent-snapshot isolation, sanitized
+database failure, and the absence of any `material_forecasts` read or write.
+
+Phase 14 returns in-memory forecast evidence only. Complete lower-phase validation is
+the only permitted inspection of observations and targets; valid changes that
+preserve the authenticated event/history evidence cannot change any Phase 14
+fingerprint, metric, selection, forecast, or call. Phase 14 does not write
+`material_forecasts`, persist/load artifacts, register models, accept a
+repository/engine/config/path/seed, forecast per segment, consume costs as a
+forecast input, alter classification/regression features, tune candidates,
+perform maintenance optimization, serve inference, explain models, expose an
+API/dashboard, build containers, or perform any Phase 15+ behavior.

@@ -311,3 +311,61 @@ evidence records genuine RED/GREEN results. Model loading/registry, MLflow,
 database prediction writes, calibration, train-plus-validation refitting,
 forecasting, optimization, inference runtime, explainability, API/dashboard,
 container, and all Phase 14+ work remain out of scope.
+
+## Phase 14 acceptance contract
+
+**Entry:** Phase 13 is published. The Phase 14 implementation receives a
+complete Phase 6 `RepositoryExport`, exact realized maintenance-history rows,
+and a fresh validated `DatasetSpec`. It reruns the locked cleaned-data
+validation to authenticate the maintenance-event keys. For every event inside
+the forecast history window, one matching realized-history row is mandatory;
+absence cannot be guessed to mean zero consumption.
+The authoritative PostgreSQL producer returns the export and history together
+from one read-only repeatable-read snapshot; separately timed queries are not
+an accepted runtime provenance path.
+
+**Output:** `roadguard.forecasting.forecast_materials` returns immutable
+per-material rolling-origin evidence and exactly one next-month
+network-aggregate forecast for each of the four locked materials. The exact
+API, schemas, candidates, metrics, timeline, completeness policy,
+fingerprinting, and failure rules are frozen in `docs/contracts.md` section
+21. Segment-level output and direct PostgreSQL persistence are excluded.
+
+**Temporal acceptance:** the forecast timeline is independent of the
+supervised 34/7/7 split. Each fold uses an expanding prefix strictly before
+its target month. Both candidates see only validation origins; selection is
+independent per material and freezes before the seven final origins. Only the
+selected candidate sees those seven origins in one walk-forward pass. Prior
+test actuals may enter a later test origin only after their month has elapsed,
+which models operational rolling-origin availability and cannot alter the
+already frozen selection. The final one-month forecast uses all accepted
+history only after frozen test metrics are complete.
+
+**Forecast acceptance:** the initial prefix is 24 months. V1 therefore has 17
+validation origins, 7 frozen test origins, a 48-month by four-material dense
+history, and four forecasts for the month immediately after the V1 cutoff.
+Candidates are exactly seasonal-naive lag 12 and trailing-three-month mean.
+Validation MAE, then validation RMSE, then candidate order select per
+material. Test MAE/RMSE are reported per material; errors in unlike physical
+units are never pooled. Negative or non-finite inputs, predictions, metrics,
+or forecasts fail rather than being clipped.
+
+**Boundary acceptance:** exact export/frame/spec types and schemas, fresh
+lower-phase validation, complete event-to-history coverage inside the window,
+natural keys, exact V1-start observation calendar, accounting values,
+canonical zero-filled monthly aggregation, fold membership, prefix-only
+candidate calls, selection freeze, one
+selected-only test pass, next-period keys, fingerprints,
+deterministic/shuffled equivalence, future/cost/segment/target isolation,
+caller immutability, hostile values, and sanitized errors are tested
+adversarially. The forecast workflow performs no database or external I/O;
+its additive repository adapter performs one read-only snapshot and no write.
+Phase 14 performs no environment, configuration, filesystem, artifact,
+model-loading, or RNG operation.
+
+**Exit:** all cross-phase gates pass, Phase 14 has independent correctness,
+temporal, completeness, provenance, and numerical review approval, and its
+TDD evidence records genuine RED/GREEN results. Database forecast writes,
+segment forecasts, extra candidates, tuning, maintenance optimization,
+inference, explainability, API/dashboard, container, and all Phase 15+ work
+remain out of scope.
