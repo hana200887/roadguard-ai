@@ -182,10 +182,10 @@ Phase 12 advanced regression is published. It provides locked Ridge-SVD and
 histogram-gradient-boosting candidates, train-only fitting, validation
 MAE/RMSE selection, one selected-only frozen test evaluation, and immutable
 metrics. Artifact persistence, risk mapping, forecasting, optimization, and
-all Phase 13+ work remain future phases.
+all Phase 13+ work remain outside Phase 12.
 
-The Phase 13 frozen-selection, artifact-publication, and risk-mapping contract
-is now under RED-first implementation. It locks one private
+Phase 13 frozen selection, artifact publication, and risk mapping is published.
+It provides one private
 train/validation selection orchestration, exact train-fitted winner retention,
 atomic content-addressed local artifacts, canonical manifests, and target-free
 test risk rows. Model loading/registry, live inference, forecasting,
