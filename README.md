@@ -185,7 +185,7 @@ metrics. Artifact persistence, risk mapping, forecasting, optimization, and
 all Phase 13+ work remain future phases.
 
 The Phase 13 frozen-selection, artifact-publication, and risk-mapping contract
-is now defined; implementation remains planned. It locks one private
+is now under RED-first implementation. It locks one private
 train/validation selection orchestration, exact train-fitted winner retention,
 atomic content-addressed local artifacts, canonical manifests, and target-free
 test risk rows. Model loading/registry, live inference, forecasting,
