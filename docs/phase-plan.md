@@ -50,7 +50,7 @@ different remote history.
 | 10 | Baseline supervised evaluation | Baseline classifier/regressor metrics | published |
 | 11 | Advanced classification | Validation-selected classifier | published |
 | 12 | Advanced regression | Validation-selected regressor | published |
-| 13 | Frozen selection, artifacts, and risk mapping | Manifested selected artifacts and risk output | planned |
+| 13 | Frozen selection, artifacts, and risk mapping | Manifested selected artifacts and risk output | active |
 | 14 | Material forecasting | Rolling-origin network-month forecast | planned |
 | 15 | Maintenance optimization | Constraint-validated optimization recommendation | planned |
 | 16 | Inference runtime | Artifact-bound internal inference pipeline | planned |
