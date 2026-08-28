@@ -255,3 +255,59 @@ commands/results. No calibration, hyperparameter search, cross-validation,
 artifact persistence, risk mapping, forecasting, optimization, inference,
 explainability, service, dashboard, container, or later-phase behavior may be
 included.
+
+## Phase 13 acceptance contract
+
+**Entry:** Phase 12 is published. The Phase 13 implementation receives a
+complete Phase 6 `RepositoryExport`, the exact canonical Phase 8 split and
+matching train-only preprocessor fit, their matching `DatasetSpec`, and an
+exact immutable `RoadGuardConfig`.
+
+**Output:** `roadguard.artifacts.persist_selected_artifacts` reproduces the
+exact Phase 11 classifier and Phase 12 regressor train/validation selections in
+one private orchestration, retains the two train-fitted winners without
+refitting, publishes their manifested local bundle atomically under
+`config.artifacts_dir`, and returns immutable manifest provenance plus the
+selected classifier's canonical test risk rows. The exact API, dependencies,
+serialization, fingerprints, files, manifest, path policy, idempotence,
+collision handling, schemas, and failure rules are frozen in
+`docs/contracts.md` section 20.
+
+**Temporal acceptance:** both selections use validation evidence only and are
+frozen before test feature transformation. Test is transformed once; only the
+selected classifier receives it once. Its captured positive probabilities are
+reused for risk output. No regressor or losing classifier sees test. Complete
+lower-phase validation may inspect test-target cells solely to enforce the
+locked repository contract; after that boundary no test target is projected,
+joined, hashed, serialized, scored, or otherwise used. This target-free pass is
+risk-output generation, not a second test evaluation: it computes no test
+metric and cannot affect selection. Persisted winners remain the exact
+train-fitted instances; train-plus-validation refitting is forbidden.
+
+**Artifact acceptance:** publication creates only `preprocessor.json`,
+`classifier.joblib`, `regressor.joblib`, `test-risk.jsonl`, and `manifest.json`
+inside the fixed digest-named directory. Payload sizes/hashes, training,
+validation-selection, and target-free test-risk-input fingerprints, selected
+names/threshold/seeds, feature schema, split dates/counts, runtime versions,
+and risk bands are canonical and manifested. Publication is visibility-atomic,
+byte-reproducible for the same locked environment, idempotent only for an exact
+existing bundle, and fail-closed for tampering/collision. Absolute paths,
+timestamps, host/user details, secrets, test targets, unselected models, and
+mutable objects are never returned or persisted.
+
+**Boundary acceptance:** exact input types, canonical export/split/fit
+reproduction, target/key alignment, forbidden-feature exclusion, probability
+shape/range, score/band mapping, UNC/network-syntax rejection, anchor-aware
+containment, operation-boundary symlink/junction/reparse/changed-identity
+rejection, fixed inventory,
+serialization/write/hash/fsync/rename failure, concurrent collision, caller
+immutability, and sanitized errors are tested adversarially. Phase 13 never
+deserializes a model. Race-free protection against a concurrently privileged
+local process is outside scope.
+
+**Exit:** all cross-phase gates pass, Phase 13 has independent correctness,
+security, temporal, provenance, and filesystem review approval, and its TDD
+evidence records genuine RED/GREEN results. Model loading/registry, MLflow,
+database prediction writes, calibration, train-plus-validation refitting,
+forecasting, optimization, inference runtime, explainability, API/dashboard,
+container, and all Phase 14+ work remain out of scope.

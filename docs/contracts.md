@@ -1820,3 +1820,450 @@ perform calibration, hyperparameter search, cross-validation, artifact/model
 persistence or registration, risk mapping, material forecasting, optimization,
 inference, explainability, API/dashboard/container work, or any Phase 13+
 behavior.
+
+## 20. Frozen selection, artifacts, and risk mapping (Phase 13)
+
+Phase 13 is the only V1 workflow that retains the exact train-fitted winners,
+publishes their local artifact bundle, and maps the selected classifier's
+captured test probabilities to the locked risk score and band. Its public
+module is `roadguard.artifacts` and its only workflow is:
+
+```python
+persist_selected_artifacts(
+    dataset: RepositoryExport,
+    split: ChronologicalSplit,
+    fit: PreprocessorFit,
+    spec: DatasetSpec,
+    config: RoadGuardConfig,
+) -> FrozenSelectionResult
+```
+
+The module `__all__` contains exactly `persist_selected_artifacts`,
+`FrozenSelectionError`, `ArtifactPersistenceError`, `ArtifactFile`,
+`RiskOutput`, `SelectedArtifactManifest`, `FrozenSelectionResult`, and these
+constants:
+
+```python
+FROZEN_SELECTION_CONTRACT_VERSION = "roadguard.phase13.v1"
+ARTIFACT_FILENAMES = (
+    "preprocessor.json",
+    "classifier.joblib",
+    "regressor.joblib",
+    "test-risk.jsonl",
+    "manifest.json",
+)
+RISK_BAND_NAMES = ("LOW", "MEDIUM", "HIGH", "CRITICAL")
+```
+
+The package root exposes the same symbols while preserving every locked Phase
+1-12 export. `FrozenSelectionError` is the contextual `ValueError` subclass
+for invalid inputs, reproduced selection state, probabilities, risk output, or
+manifest values. `ArtifactPersistenceError` is the contextual `RuntimeError`
+subclass for path, serialization, hashing, write, flush, synchronization,
+collision, inventory, or atomic-publication failures.
+
+All five arguments must be exact instances of their declared types; wrong
+top-level types and lookalikes raise `TypeError` before any field is read.
+Expected lower-phase validation/preprocessing errors, expected scikit-learn
+estimator/metric failures, expected serialization failures, and expected
+`OSError` or path failures are translated at their narrow boundary to one of
+the two Phase 13 errors with a fixed context message and suppressed exception
+chaining. Public errors contain no raw value, row, object or estimator
+representation, absolute path, environment value, database URL, credential,
+serialized byte, or temporary name. Unexpected programming failures and
+system-exiting exceptions are not relabeled. The complete allowed public
+message set is fixed to `Phase 13 input validation failed.`, `Phase 13
+selection failed.`, `Phase 13 risk mapping failed.`, `Phase 13 artifact
+serialization failed.`, `Phase 13 artifact path validation failed.`, `Phase 13
+artifact write failed.`, `Phase 13 artifact verification failed.`, and `Phase
+13 artifact publication failed.` No dynamic suffix or interpolated value is
+permitted.
+
+### Dependency, configuration, and path boundary
+
+Phase 13 adds exactly one direct runtime declaration, `joblib>=1.5,<2`; the
+already locked transitive `joblib 1.5.3` remains authoritative, so the lockfile
+need not resolve to a new package version. No other dependency is added. Model
+payloads use exactly `joblib.dump(value, binary_file, compress=0, protocol=5)`.
+Phase 13 exposes no joblib/pickle load or deserialization API and never calls a
+load function.
+
+Only `config.seed` and `config.artifacts_dir` are read. The seed must be the
+exact positive built-in `int` required by Phases 11-12. `artifacts_dir` must
+satisfy `type(config.artifacts_dir) is type(Path())`, must not denote a
+filesystem root, and is resolved only internally. `env`, `data_dir`, and
+`database_url` are ignored and cannot change
+any selected state, artifact byte, manifest, risk row, return value, or error.
+The workflow never calls `load_config`, reads an environment variable, accepts
+a caller path/filename/model/byte stream, or changes the current directory.
+
+UNC/network syntax is rejected. A filesystem anchor such as `C:\` or `/` is a
+permitted ancestor but cannot itself be `artifacts_dir`; every configured
+component below the anchor and every created descendant is rejected when it is
+a symlink, junction, reparse point, non-anchor mount point, or special file.
+The root may already be an ordinary directory or may be created as one leaf
+below verified existing ancestors. Unresolved traversal, device/reserved
+targets, and any fixed descendant that resolves outside the root are rejected.
+At each filesystem operation boundary, containment and file identity are
+rechecked. Staging and digest destinations are siblings beneath the same
+verified contract-version directory and must report the same device/volume.
+Whether a non-UNC mounted filesystem is actually remote is a documented caller
+precondition because Python path APIs cannot determine that portably. The
+workflow may create only the contract-version directory, one fresh staging
+directory, one digest directory, and the fixed names in `ARTIFACT_FILENAMES`.
+
+### One private selection and capture orchestration
+
+Phase 11 and Phase 12 public results intentionally contain metrics only; they
+expose no fitted estimator or captured prediction. Phase 13 therefore does not
+call either public evaluator and does not accept either result as input.
+Instead, one private orchestration shares or extracts the already locked
+selection primitives while preserving the public behavior of both earlier
+modules. An internal refactor is permitted only when all existing Phase 11 and
+Phase 12 tests remain unchanged and green.
+
+The workflow deep-copies the four caller-owned export frames, fresh-runs the
+complete cleaned-data and feature validation, reproduces the canonical 34/7/7
+split, requires the supplied split to match in schema/dtypes/keys/dates/values
+and membership, reproduces the train-only `PreprocessorFit`, and requires the
+supplied fit to match field-for-field. Train and validation are each
+transformed once for the shared Phase 13 orchestration.
+
+The exact Phase 11 classifier constructors, two candidate seeds, positive
+class semantics, validation threshold search, candidate metrics, and ranking
+remain unchanged. The exact Phase 12 regressor constructors, HGB-only seed,
+validation MAE/RMSE records, and ranking remain unchanged. Each of the two
+classifiers and two regressors fits exactly once on the same canonical
+train-only matrix and its own key-joined target. Each classifier receives the
+validation matrix exactly once through `predict_proba`; each regressor receives
+it exactly once through `predict`. The classifier and regressor selections are
+both frozen before any test feature is transformed.
+
+The retained selected classifier and regressor are the same train-fitted
+instances that produced their selected validation records. Neither is refit
+on train plus validation or on any other rows. Immediately after both
+selections freeze and before any test transformation, the exact preprocessor,
+selected-classifier, and selected-regressor payload bytes are captured in the
+verified staging area. Those three payloads can therefore depend only on
+train/validation selection state and never on a test feature or target. Losing
+candidates are discarded and are never serialized. No tuning,
+cross-validation, calibration, ensembling, baseline comparison, or new
+candidate is performed.
+
+After both selections are frozen, the canonical test feature partition is
+transformed exactly once. Only the selected classifier receives it, exactly
+once through `predict_proba`; the captured positive-class probability vector
+is the sole probability source for all Phase 13 risk rows. Neither losing
+classifier nor either regressor receives a test matrix. Complete lower-phase
+validation may inspect test-target cells solely to enforce the locked
+repository contract. After that validation boundary, Phase 13 never projects,
+joins, hashes, serializes, scores, or otherwise uses test targets for
+selection, artifacts, risk output, or returned values. Regression test
+evaluation remains the responsibility of Phase 12 and is not repeated here.
+
+### Risk output
+
+Risk output contains exactly one row per canonical test key, in ascending
+(`segment_id`, `date`) order. V1 therefore produces exactly 2,100 rows. The
+selected classifier must retain exact `classes_ == ndarray([0, 1])`, and its
+single test `predict_proba` output must be an `ndarray` of shape
+`(test_rows, 2)`. Every captured positive-class scalar is converted exactly
+once to a finite built-in `float` in `[0, 1]`; booleans, numeric-looking
+strings, malformed shapes/classes, and non-finite or out-of-range values are
+rejected, never clipped or rounded.
+
+For each probability, `risk_score_from_probability` is called exactly once.
+The resulting exact built-in `int` assigns the band only by these inclusive
+ranges:
+
+```text
+LOW       0-30
+MEDIUM   31-60
+HIGH     61-80
+CRITICAL 81-100
+```
+
+No alternative rounding or band implementation is permitted. In particular,
+scores at probabilities `0.305`, `0.605`, and `0.805` are respectively 31,
+61, and 81. The raw probability, score, and band must remain mutually
+consistent. Probabilities are not described as calibrated because Phase 13
+does not implement or evaluate calibration.
+
+The public and persisted risk row fields are exactly `segment_id`, `date`,
+`maintenance_probability`, `risk_score`, and `risk_band`. Targets, hard class
+labels, regression predictions, thresholds, model internals, feature vectors,
+and test metrics are absent.
+
+### Canonical provenance fingerprints
+
+`training_fingerprint` is exactly the lowercase SHA-256 defined by Phase 9. It
+binds the canonical training feature/target evidence, full split-date
+provenance, and `DatasetSpec`, while excluding validation/test values.
+
+`selection_fingerprint` is SHA-256 over UTF-8 canonical JSON with sorted
+object keys, compact separators `(',', ':')`, ASCII escaping, and non-finite
+values forbidden. Its payload is exactly:
+
+```json
+{
+  "columns": ["FEATURE_FRAME_COLUMNS + TARGET_COLUMNS[2:]"],
+  "contract": "roadguard.phase13.v1",
+  "spec": {
+    "dataset_months_per_segment": 0,
+    "dataset_observations": 0,
+    "dataset_segments": 0
+  },
+  "validation_dates": ["YYYY-MM-DD"],
+  "validation_rows": [["canonical scalar"]]
+}
+```
+
+The real ordered columns, exact spec integers, validation dates, and rows
+replace the placeholders. Rows are sorted by (`segment_id`, `date`). Scalar
+canonicalization is exactly Phase 9: dates/datetimes use `YYYY-MM-DD`, strings
+remain strings, integers remain JSON integers, and finite floats use lowercase
+`float.hex()` strings with negative zero normalized to positive zero. The
+fingerprint includes both supervised targets because both validation
+selections depend on them. It excludes every test feature, test target, test
+probability, risk value, filesystem value, and serialized artifact byte.
+
+`risk_input_fingerprint` is SHA-256 over the same canonical JSON rules and
+scalar encoding. Its payload is exactly:
+
+```json
+{
+  "columns": ["FEATURE_FRAME_COLUMNS"],
+  "contract": "roadguard.phase13.v1",
+  "spec": {
+    "dataset_months_per_segment": 0,
+    "dataset_observations": 0,
+    "dataset_segments": 0
+  },
+  "test_dates": ["YYYY-MM-DD"],
+  "test_rows": [["canonical scalar"]]
+}
+```
+
+The real ordered `FEATURE_FRAME_COLUMNS`, exact spec integers, test dates, and
+rows replace the placeholders. Rows are sorted by (`segment_id`, `date`). The
+fingerprint binds every target-free test feature consumed by risk mapping and
+excludes both test targets, captured probabilities, risk values, filesystem
+values, and serialized artifact bytes. Any valid test-feature change must
+therefore change `risk_input_fingerprint`, the manifest bytes/digest, and the
+relative artifact directory even when the selected classifier happens to emit
+identical probabilities.
+
+### Exact payload files and canonical bytes
+
+The four payload files are produced completely before the manifest:
+
+1. `preprocessor.json` contains exactly the immutable `PreprocessorFit` fields
+   `scaled_columns`, `means`, `stds`, `province_categories`, and
+   `road_type_categories`; tuples encode as arrays and floats encode as the
+   Phase 9 canonical `float.hex()` strings.
+2. `classifier.joblib` contains only the internally constructed selected
+   train-fitted classifier. Its selected name, decision threshold, seed, and
+   feature schema live in the manifest rather than in caller-controlled
+   wrapper state.
+3. `regressor.joblib` contains only the internally constructed selected
+   train-fitted regressor.
+4. `test-risk.jsonl` contains the exact risk rows. Each row is compact
+   ASCII-escaped JSON with keys sorted lexicographically, a JSON-number raw
+   finite probability, an ISO date string, and one `\n`; the file has no blank
+   line and ends in exactly one `\n` when non-empty.
+
+`manifest.json`, `preprocessor.json`, and every JSONL row use exactly
+`json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True,
+allow_nan=False)`. The resulting text is encoded as UTF-8 and followed by
+exactly one `\n`; every file uses `\n` line endings. Every persisted date uses
+ISO `YYYY-MM-DD`. Public result floats remain built-in floats; manifest float
+fields are stored as canonical lowercase `float.hex()` strings. No file
+contains an absolute path, timestamp, hostname, username, environment name,
+database value, credential, caller representation, test target, or unselected
+estimator.
+
+Each payload file is closed and synchronized before its exact byte size and
+lowercase 64-character SHA-256 are recorded. `ArtifactFile` records preserve
+this exact role order: `preprocessor`, `classifier`, `regressor`,
+`test_risk`. The manifest does not list or hash itself. Its canonical bytes are
+hashed after all four payload records are frozen; that digest is
+`manifest_sha256` and cannot appear inside `manifest.json`, avoiding a
+self-referential digest.
+
+Runtime provenance records exactly these names in this order: `python` from
+`platform.python_version()`, then `numpy`, `pandas`, `scikit-learn`, and
+`joblib` from `importlib.metadata.version(...)` using those exact distribution
+names. `platform_tag` is exactly `sysconfig.get_platform()`. Exact input/config,
+platform tag, Python version, and locked library versions must produce
+byte-identical payloads, manifest, digest, relative directory, and risk rows
+after canonical rebuilding.
+
+### Manifest and frozen result schemas
+
+All public result types are `@dataclass(frozen=True)` and expose no estimator,
+mutable frame/array/mapping, raw serialized bytes, absolute path, configuration
+object, database value, target, regression prediction, or test metric. Their
+fields and order are exactly:
+
+```python
+ArtifactFile(
+    role: Literal["preprocessor", "classifier", "regressor", "test_risk"],
+    filename: str,
+    sha256: str,
+    size_bytes: int,
+)
+
+RiskOutput(
+    segment_id: str,
+    date: date,
+    maintenance_probability: float,
+    risk_score: int,
+    risk_band: Literal["LOW", "MEDIUM", "HIGH", "CRITICAL"],
+)
+
+SelectedArtifactManifest(
+    contract_version: str,
+    training_fingerprint: str,
+    selection_fingerprint: str,
+    risk_input_fingerprint: str,
+    classifier_contract_version: str,
+    regressor_contract_version: str,
+    selected_classifier_name: str,
+    selected_regressor_name: str,
+    classifier_decision_threshold: float,
+    master_seed: int,
+    classifier_seed: int,
+    regressor_seed: int | None,
+    feature_columns: tuple[str, ...],
+    train_rows: int,
+    validation_rows: int,
+    test_rows: int,
+    train_dates: tuple[date, ...],
+    validation_dates: tuple[date, ...],
+    test_dates: tuple[date, ...],
+    classification_candidates: tuple[
+        CandidateValidationMetrics,
+        CandidateValidationMetrics,
+    ],
+    regression_candidates: tuple[
+        CandidateRegressionValidationMetrics,
+        CandidateRegressionValidationMetrics,
+    ],
+    risk_bands: tuple[
+        tuple[Literal["LOW", "MEDIUM", "HIGH", "CRITICAL"], int, int],
+        ...,
+    ],
+    risk_output_rows: int,
+    runtime_versions: tuple[tuple[str, str], ...],
+    platform_tag: str,
+    artifacts: tuple[ArtifactFile, ArtifactFile, ArtifactFile, ArtifactFile],
+)
+
+FrozenSelectionResult(
+    manifest_sha256: str,
+    relative_artifact_directory: str,
+    manifest: SelectedArtifactManifest,
+    risk_output: tuple[RiskOutput, ...],
+)
+```
+
+`classifier_seed` is the exact selected Phase 11 candidate seed.
+`regressor_seed` is `None` only for `ridge_l2`; otherwise it is the exact
+selected Phase 12 HGB seed. Candidate records preserve their locked order and
+the selected names/threshold reproduce the exact validation-only rules.
+`feature_columns` equals the reproduced preprocessor columns; V1 rows are
+10,200/2,100/2,100 and dates are 34/7/7. `risk_bands` is exactly
+`(("LOW", 0, 30), ("MEDIUM", 31, 60), ("HIGH", 61, 80),
+("CRITICAL", 81, 100))`. Runtime version order is fixed above.
+
+The manifest JSON is the direct canonical JSON projection of
+`SelectedArtifactManifest`; dataclass objects become objects, tuples become
+arrays, dates become ISO `YYYY-MM-DD` strings, and floats use the canonical
+rule above. `relative_artifact_directory` is exactly
+`roadguard.phase13.v1/<manifest_sha256>` with forward slashes. The physical
+final directory is that fixed relative directory beneath the configured
+artifact root.
+
+### Atomic publication, collision, and idempotence
+
+All files are first created exclusively in a fresh verified sibling staging
+directory on the same filesystem. Its concurrency-safe cryptographic nonce is
+outside the section 8 model/data RNG policy: it never enters or
+changes a payload, manifest, digest, relative directory, risk row, or returned
+value. After serialization, close/sync, independent size/hash verification,
+canonical manifest creation, and manifest close/sync, the complete staging
+directory is published with one atomic directory rename. Atomicity means
+visibility of the complete bundle to cooperating readers, not guaranteed
+crash durability; the parent directory is synchronized when the platform
+supports it. A success result is constructed only after the final directory
+and exact five file inventory have been re-opened as bytes and verified without
+deserializing models.
+
+If the digest-named final directory already exists, Phase 13 reads bytes only,
+requires exactly the five fixed regular files with no extras, validates each
+expected size before hashing, and streams hashes with a fixed bounded buffer;
+it never allocates from an attacker-controlled file size. It verifies the
+canonical manifest plus every recorded size/hash. A byte-identical valid bundle
+is idempotent and returned without overwrite. Missing, extra, link/reparse,
+special, truncated, changed, or conflicting content raises
+`ArtifactPersistenceError`; it is never overwritten, repaired, merged, or
+deleted. A concurrent rename collision follows the same verify-identical or
+fail-closed rule. Before an idempotent return or collision failure, the current
+call's staging directory is removed through the safe cleanup rule below.
+
+On any pre-publication failure, no result is returned and no new or modified
+final bundle becomes visible; any pre-existing bundle remains untouched.
+Cleanup may remove only the exact staging directory handle created by that call
+after rechecking its identity, containment, and non-link status at the cleanup
+boundary. It never removes or modifies the configured root, a completed
+bundle, caller-owned content, or a path whose identity has changed.
+Staging directories left by process termination are ignored and never adopted,
+published, or removed merely because their names match the staging pattern.
+
+### Isolation, failure, testing, and scope
+
+Changing only valid test targets cannot change any returned or persisted Phase
+13 value: complete lower-phase validation may inspect them for validity, but
+no downstream Phase 13 computation consumes them. Changing only valid test
+features must change `risk_input_fingerprint`, manifest bytes/digest, and the
+relative directory; it may also change captured probabilities, risk rows,
+`test-risk.jsonl`, and its artifact record. It cannot change train-fitted
+model/preprocessor bytes, training/selection fingerprints, candidate
+validation records, selected names/threshold/seeds, feature schema, or
+row/date counts. Changing validation values may change selection evidence,
+selected artifacts, and downstream risk output but cannot change preprocessing
+or any candidate's train input/state before selection. Equivalent shuffled
+upstream frames reproduce identical output after canonical rebuilding.
+
+RED-first tests must cover the absent public module; exact public/package
+surface and frozen schemas; direct joblib dependency and exact serialization
+calls; exact four train fits and four validation predictions; exact Phase
+11/12 constructors, seeds, metrics, thresholds, rankings, and retained winner
+identity; both selections frozen before one test transform; one selected-only
+classifier test call and no other test-model call; test probability vector
+reuse; target-free 2,100-row V1 risk output; every score/band boundary and sole
+use of `risk_score_from_probability`; training/selection fingerprints; exact
+canonical bytes, file names/inventory/sizes/hashes, manifest digest, and
+relative path; reproducibility and shuffle invariance; training, selection,
+and risk-input fingerprints; test-feature and test-target isolation; ignored
+config fields; caller immutability; malformed probabilities and forged inputs;
+poisoned nested methods; secret/error
+sanitization; operation-boundary path traversal, containment, symlink,
+junction/reparse, special-file, and changed-identity rejection; partial writes
+and every flush/hash/rename failure; collision, tampering, concurrency and
+idempotence; and a complete V1 publication in two
+isolated roots with byte-identical outputs. Tests patch every joblib/pickle load
+entry point to fail if Phase 13 attempts deserialization.
+
+Phase 13 performs local artifact writes only under the configured root. It
+does not load models, register with MLflow, write predictions or artifacts to
+PostgreSQL, accept API input, perform online/batch inference beyond the locked
+test risk output, calibrate probabilities, refit on train plus validation,
+tune/cross-validate, forecast materials, optimize maintenance, explain models,
+serve an API/dashboard, build containers, or perform any Phase 14+ behavior.
+
+Protection against a concurrently privileged local process replacing
+filesystem components between an operation-boundary check and use is outside
+the Phase 13 threat model. Phase 13 must still fail closed whenever such a
+replacement is observable at a required boundary; it makes no race-free
+filesystem guarantee against that actor.
