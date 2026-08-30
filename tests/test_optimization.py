@@ -30,9 +30,12 @@ from roadguard.artifacts import (
     RiskOutput,
     SelectedArtifactManifest,
 )
-from roadguard.classification import CandidateValidationMetrics
+from roadguard.classification import CandidateValidationMetrics, _derive_candidate_seed
+from roadguard.features import FEATURE_COLUMNS
+from roadguard.preprocessing import CONSTRUCTION_DATE_DAY_COLUMN
 from roadguard.regression import CandidateRegressionValidationMetrics
 from roadguard.risk import risk_score_from_probability
+from roadguard.segments import PROVINCES, ROAD_TYPES
 
 PUBLIC_NAMES = (
     "optimize_maintenance",
@@ -47,7 +50,18 @@ PUBLIC_NAMES = (
 )
 SEGMENTS = tuple(f"QL01-KM{index:03d}-{index + 1:03d}" for index in range(300))
 TEST_DATES = tuple(date(2025, month, 1) for month in range(6, 13))
+EXPECTED_FEATURE_COLUMNS = (
+    tuple(
+        column
+        for column in FEATURE_COLUMNS
+        if column not in ("province", "road_type", "construction_date")
+    )
+    + (CONSTRUCTION_DATE_DAY_COLUMN,)
+    + tuple(f"province_{category}" for category in sorted(PROVINCES))
+    + tuple(f"road_type_{category}" for category in sorted(ROAD_TYPES))
+)
 INPUT_ERROR = "Phase 15 input validation failed."
+OUTPUT_ERROR = "Phase 15 output validation failed."
 
 
 def _optimization() -> Any:
@@ -123,9 +137,9 @@ def _selection(final_probabilities: dict[str, float] | None = None) -> FrozenSel
         "ridge_l2",
         0.5,
         42,
-        42,
-        43,
-        ("road_type",),
+        _derive_candidate_seed(42, 0),
+        None,
+        EXPECTED_FEATURE_COLUMNS,
         10200,
         2100,
         2100,
@@ -184,6 +198,20 @@ def _replace_risk(
         phase13._canonical_json_bytes(phase13._manifest_projection(manifest))
     ).hexdigest()
     return FrozenSelectionResult(digest, f"roadguard.phase13.v1/{digest}", manifest, risk)
+
+
+def _replace_manifest(
+    selection: FrozenSelectionResult, manifest: SelectedArtifactManifest
+) -> FrozenSelectionResult:
+    """Rehash a deliberately forged manifest while preserving its risk payload."""
+    from roadguard import artifacts as phase13
+
+    digest = hashlib.sha256(
+        phase13._canonical_json_bytes(phase13._manifest_projection(manifest))
+    ).hexdigest()
+    return FrozenSelectionResult(
+        digest, f"roadguard.phase13.v1/{digest}", manifest, selection.risk_output
+    )
 
 
 def _costs(module: Any, overrides: dict[str, tuple[int, date]] | None = None) -> tuple[Any, ...]:
