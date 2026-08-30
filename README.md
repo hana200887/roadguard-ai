@@ -198,7 +198,7 @@ four next-month forecast rows. Forecast persistence, maintenance optimization,
 inference, explainability, and all Phase 15+ work remain future phases.
 
 The Phase 15 maintenance-prioritization contract is now frozen; implementation
-remains planned. It defines an exact budget-only, single-date, offline
+is underway. It defines an exact budget-only, single-date, offline
 evaluation over Phase 13 risk rows authenticated against a separately trusted
 manifest digest and explicit caller-asserted prospective cost-scenario values.
 Phase 15 does not authenticate cost provenance. Phase 14 forecasts are not

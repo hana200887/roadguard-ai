@@ -52,7 +52,7 @@ different remote history.
 | 12 | Advanced regression | Validation-selected regressor | published |
 | 13 | Frozen selection, artifacts, and risk mapping | Manifested selected artifacts and risk output | published |
 | 14 | Material forecasting | Rolling-origin network-month forecast | published |
-| 15 | Maintenance optimization | Constraint-validated optimization recommendation | planned |
+| 15 | Maintenance optimization | Constraint-validated optimization recommendation | active |
 | 16 | Inference runtime | Artifact-bound internal inference pipeline | planned |
 | 17 | Explainability | Frozen-model explanation output | planned |
 | 18 | FastAPI service | Validated serving API with health/readiness semantics | planned |
