@@ -2599,3 +2599,306 @@ repository/engine/config/path/seed, forecast per segment, consume costs as a
 forecast input, alter classification/regression features, tune candidates,
 perform maintenance optimization, serve inference, explain models, expose an
 API/dashboard, build containers, or perform any Phase 15+ behavior.
+
+## 22. Exact offline maintenance prioritization (Phase 15)
+
+Phase 15 is the only V1 workflow that converts the authenticated final Phase
+13 held-out risk snapshot and an explicit caller-asserted prospective cost
+scenario into an exact budget-feasible set of segments for human planning
+review. It is an offline evaluation, not live inference or automated
+maintenance execution.
+Its public module is `roadguard.optimization` and its only workflow is:
+
+```python
+optimize_maintenance(
+    selection: FrozenSelectionResult,
+    expected_manifest_sha256: str,
+    candidate_costs: tuple[MaintenanceCostInput, ...],
+    budget_vnd: int,
+) -> MaintenanceOptimizationResult
+```
+
+The module `__all__` contains exactly `optimize_maintenance`,
+`MaintenanceOptimizationError`, `MaintenanceCostInput`,
+`MaintenanceRecommendation`, `MaintenanceOptimizationResult`, and these
+constants:
+
+```python
+MAINTENANCE_OPTIMIZATION_CONTRACT_VERSION = "roadguard.phase15.v1"
+MAINTENANCE_OPTIMIZATION_USE_CASE = "OFFLINE_EVALUATION_ONLY"
+MAX_EXACT_VND = 2**63 - 1
+V1_OPTIMIZATION_CANDIDATE_COUNT = 300
+```
+
+The package root exposes the same symbols while preserving every locked Phase
+1-14 export. Phase 15 adds no dependency, configuration field, environment
+variable, seed, or RNG use. The workflow performs no database, repository,
+filesystem, artifact-load, model, forecast, network, or external I/O.
+
+`MaintenanceOptimizationError` is the contextual `ValueError` subclass for
+invalid authenticated source data, cost scenarios, fingerprints, optimization
+state, or returned recommendations. All four arguments must be exact
+instances of their declared types: `selection` must have exact type
+`FrozenSelectionResult`, `expected_manifest_sha256` must have exact built-in
+type `str`, `candidate_costs` must have exact type `tuple` and contain only
+exact `MaintenanceCostInput` records, and `budget_vnd` must have exact built-in
+type `int`. The function preflights all top-level types and every cost-tuple
+element type before reading any cost-record field. It similarly requires exact
+nested Phase 13 public record and tuple types before reading their fields.
+Lookalikes, subclasses, booleans, NumPy scalars, mutable lists/mappings, and
+other type violations raise `TypeError`; later value/domain violations map to
+`Phase 15 input validation failed.` No hostile field method is invoked.
+
+The recursive type preflight also requires exact `SelectedArtifactManifest`,
+`ArtifactFile`, `RiskOutput`, classification/regression candidate-metric
+records, every declared tuple container including each runtime-version pair,
+and exact built-in date/string/integer/float leaf types before scalar-domain
+validation. The observable order is recursive type checks, scalar-domain
+checks, then comparisons, sorting, canonical projection, and hashing. A
+missing or malformed field on an otherwise exact forged record is an input
+validation failure; no supplied value controls attribute lookup behavior.
+
+Expected validation, canonicalization, arithmetic, or optimization failures
+are translated at their narrow boundary with suppressed exception chaining.
+The complete allowed `MaintenanceOptimizationError` messages are `Phase 15
+input validation failed.`, `Phase 15 optimization failed.`, and `Phase 15
+output validation failed.` No dynamic suffix is permitted. Public errors
+contain no raw segment, cost, budget, row, object representation, serialized
+byte, path, environment value, database URL, credential, or internal state.
+Unexpected programming failures and system-exiting exceptions are not
+relabeled.
+
+### Scientific and temporal meaning
+
+The source Phase 13 probabilities predict occurrence of the locked
+`maintenance_within_30_days` label and are explicitly uncalibrated. Phase 15
+uses only their derived exact integer `risk_score` values as prioritization
+utilities. Neither probability nor score is a deterioration hazard, causal
+effect of an intervention, prevented failure count, avoided loss, expected
+savings, or monetary benefit.
+
+The evidence date is derived internally as the greatest exact date in the
+authenticated `selection.manifest.test_dates`; callers cannot choose or shift
+it. Exactly the risk row for that evidence date is a candidate decision for
+each segment. Earlier held-out dates are authenticated as source provenance
+but are never separate actions, objective terms, costs, or constraints. The
+inclusive risk window ends 30 calendar days after the evidence date, preserving
+the locked target boundary `days_until_maintenance <= 30`.
+
+V1's latest Phase 13 evidence date and Phase 14 next-month forecast period do
+not describe one common decision horizon. Phase 14 output predicts expected
+network-level consumption, not inventory, procurement availability, or
+capacity, and no per-segment action-to-material requirement exists. Phase 15
+therefore does not accept or inspect `MaterialForecastEvaluation` and cannot
+use forecast quantities as resource constraints. Adding material constraints
+requires a later separately frozen contract with available-capacity and
+per-action-demand semantics.
+
+### Exact immutable schemas
+
+All public records are `@dataclass(frozen=True)` with fields in exactly this
+order:
+
+```python
+MaintenanceCostInput(
+    segment_id: str,
+    cost_vnd: int,
+    cost_as_of_date: date,
+)
+
+MaintenanceRecommendation(
+    priority_rank: int,
+    segment_id: str,
+    evidence_date: date,
+    maintenance_probability: float,
+    risk_score: int,
+    risk_band: Literal["LOW", "MEDIUM", "HIGH", "CRITICAL"],
+    cost_vnd: int,
+    cost_as_of_date: date,
+)
+
+MaintenanceOptimizationResult(
+    contract_version: str,
+    use_case: Literal["OFFLINE_EVALUATION_ONLY"],
+    source_manifest_sha256: str,
+    source_risk_input_fingerprint: str,
+    optimization_input_fingerprint: str,
+    evidence_date: date,
+    risk_window_end: date,
+    budget_vnd: int,
+    selected_cost_vnd: int,
+    remaining_budget_vnd: int,
+    candidate_count: int,
+    selected_count: int,
+    total_risk_score: int,
+    recommendations: tuple[MaintenanceRecommendation, ...],
+)
+```
+
+Every exposed scalar has its exact annotated built-in type. Collections are
+tuples. No caller object, frame, array, estimator, model payload, target,
+feature vector, regression output, threshold, forecast, mutable mapping,
+configuration, repository/database object, path, or credential is exposed.
+
+`MaintenanceCostInput.cost_vnd` is an explicit prospective planning-scenario
+value asserted by the caller to have been available on `cost_as_of_date`.
+Historical `maintenance_cost` establishes its exact integer VND meaning but is
+realized accounting data and is never automatically projected forward,
+averaged, filled, or otherwise converted into an estimate by Phase 15. Every
+`cost_as_of_date` must be an exact built-in `date` no later than the evidence
+date. Phase 15 cannot authenticate the estimate's source, method, availability,
+freshness, or lineage. The caller owns those preconditions; Phase 15 only makes
+the asserted as-of date and exact value fingerprint-visible.
+
+### Complete source and scenario validation
+
+`expected_manifest_sha256` is a trust anchor supplied separately from
+`selection`. The caller must obtain and approve it out of band from the Phase
+13 publication boundary; copying an untrusted digest out of the same supplied
+object does not meet this precondition. Phase 15 authenticates the complete
+Phase 13 result against that trusted digest in memory before reading the
+decision snapshot. It requires the exact Phase 13 contract version,
+canonical manifest fields and artifact inventory, lowercase 64-character
+digests, exact equality between the expected and returned manifest digests,
+and the exact relative contract-version/digest directory. It
+reprojects the manifest with the locked Phase 13 canonical JSON rules and
+requires its SHA-256 to equal both digest values. It also serializes
+every `RiskOutput` with the locked Phase 13 canonical JSONL rules and requires
+the exact byte length and SHA-256 to match the manifest's `test_risk` artifact
+record. No artifact file is opened.
+
+The risk tuple must have the exact manifested row count, ascending
+(`segment_id`, `date`) order, exact manifest test-date membership, no duplicate
+key, and the same complete segment set on every test date. Phase 15 is V1-only:
+it requires exactly seven test dates, exactly 2,100 risk rows, and exactly
+`V1_OPTIMIZATION_CANDIDATE_COUNT` (300) unique segments on every date. It
+therefore derives exactly 300 final-date candidates and rejects a larger or
+smaller source before optimization.
+Every segment ID, date, built-in finite probability in `[0, 1]`, exact
+built-in integer score, and exact band is fresh-validated. The score must equal
+the sole `risk_score_from_probability` result and the band must match the
+locked inclusive ranges. Boundaries including probabilities `0.305`, `0.605`,
+and `0.805` remain scores 31, 61, and 81.
+
+`candidate_costs` must contain exactly one record for every final-date segment
+and no missing, duplicate, or extra segment. Input tuple order is irrelevant;
+canonical processing sorts by exact ASCII `segment_id`. Each `cost_vnd` is an
+exact positive built-in integer at most `MAX_EXACT_VND`. `budget_vnd` is an
+exact non-negative built-in integer at most `MAX_EXACT_VND`. Values are never
+coerced, rounded, scaled, clipped, parsed, or converted through floating-point
+arithmetic. All internal cost sums use exact Python integers and are checked
+against the budget and signed-64-bit boundary.
+
+### Exact objective, constraints, and algorithm
+
+There is one indivisible binary choice per final-date segment: prioritize it
+for human review or defer it. Every action is optional. There is no partial
+action, repeated segment action, mandatory work, action type, scheduled date,
+crew/geographic/fairness quota, or material constraint.
+
+Among all subsets whose exact summed cost does not exceed `budget_vnd`, the
+unique result is chosen by this lexicographic objective:
+
+1. maximize the exact sum of selected integer `risk_score` values;
+2. among equal-score subsets, minimize exact selected `cost_vnd`;
+3. among equal-score, equal-cost subsets, scan candidates in ascending
+   `segment_id` order and prefer selecting the candidate at the first differing
+   binary decision.
+
+The final tie rule is equivalent to the lexicographically smallest sorted
+selected-ID tuple at this boundary because all candidate costs are strictly
+positive; an equal-cost strict superset is impossible. Raw probabilities and
+risk bands remain audit and display fields and never provide separate objective
+weights.
+
+The implementation is exact deterministic 0/1 dynamic programming indexed by
+attainable total risk score, never by the VND budget. Candidates are processed
+in ascending segment ID order. For each risk total, it retains only the state
+with lower exact cost, then the state preferred by the final binary tie rule.
+Risk states update in descending order for each candidate. With exactly 300 V1
+candidates and score at most 100, the state domain has at most 30,001 values
+and a full-domain scan has at most 9,000,300 candidate-state visits. The
+selected set is reconstructed and every objective and constraint is recomputed
+independently before return.
+No greedy ratio, external solver, floating objective, heuristic, approximation,
+timeout, randomization, fallback, or best-effort result is permitted.
+
+A candidate transition is computed with an exact Python integer. If its cost
+exceeds `budget_vnd`, it is discarded as infeasible without error, including
+when adding two individually valid costs would exceed `MAX_EXACT_VND`. Every
+stored state and returned cost is budget-feasible and therefore no greater
+than `MAX_EXACT_VND`. Valid high-cost inputs never become an overflow error.
+
+The empty subset is valid and is the unique result for zero budget, no
+affordable positive-score candidate, or an all-zero-risk snapshot. A candidate
+with score zero is never selected because it cannot improve the first
+objective and strictly worsens the second. A budget that can afford every
+positive-score candidate selects all such candidates. No valid input is
+infeasible because all actions are optional.
+
+Selected recommendations are presentation-ranked by descending `risk_score`,
+then descending `maintenance_probability`, then ascending `cost_vnd`, then
+ascending `segment_id`; `priority_rank` is the contiguous exact sequence from
+1. This order does not change the optimized subset. Totals are recomputed from
+the returned records: selected cost never exceeds budget, remaining budget is
+the exact difference, selected segments are unique input candidates, and total
+risk score is exact.
+
+### Canonical optimization-input fingerprint
+
+`optimization_input_fingerprint` is lowercase SHA-256 over UTF-8 canonical
+JSON with sorted object keys, compact separators `(',', ':')`, ASCII escaping,
+and non-finite values forbidden. Dates use `YYYY-MM-DD`; strings remain
+strings; integers remain JSON integers; finite floats use lowercase
+`float.hex()` with negative zero normalized to positive zero exactly as in the
+Phase 9 canonical scalar rules. Its payload is exactly:
+
+```json
+{
+  "budget_vnd": 0,
+  "candidates": [["segment_id", "evidence_date", "probability_hex", 0,
+                  "risk_band", 0, "cost_as_of_date"]],
+  "columns": ["segment_id", "evidence_date", "maintenance_probability",
+              "risk_score", "risk_band", "cost_vnd", "cost_as_of_date"],
+  "contract": "roadguard.phase15.v1",
+  "objective": ["maximize_total_risk_score", "minimize_total_cost_vnd",
+                "prefer_selected_lower_segment_id_at_first_difference"],
+  "source_manifest_sha256": "lowercase sha256",
+  "source_risk_input_fingerprint": "lowercase sha256",
+  "use_case": "OFFLINE_EVALUATION_ONLY"
+}
+```
+
+Real values replace the placeholders and candidate rows are sorted by
+`segment_id`. The fingerprint binds the full Phase 13 manifest by digest and
+therefore indirectly binds all authenticated earlier risk dates, while the
+candidate rows bind every final-date risk/cost value actually optimized. It is
+sensitive to source, latest risk, cost, as-of date, and budget, and invariant
+to input cost tuple order. It excludes output selection, metrics, paths,
+configuration, environment, database state, Phase 14 forecasts, and all later
+phase inputs.
+
+### Isolation, RED tests, and scope
+
+RED-first tests must cover the absent module/API; exact exports, signature,
+constants, frozen field order, and package surface; exact top-level and nested
+types; manifest digest and risk JSONL size/hash authentication; risk row counts,
+dates, keys, ordering, probability/score/band consistency, and boundary scores;
+complete cost coverage and as-of rules; exact VND zero/positive/maximum/overflow
+boundaries; zero budget, all unaffordable, all-zero risk, exact fit, and all
+positive-score candidates affordable; known manual optima and a greedy
+counterexample; exhaustive small fixed-case oracle comparison; all three
+objective tie-breaks; reconstruction and total invariants; 300-candidate scale;
+fingerprint bytes, sensitivity, and isolation; shuffled-cost equivalence;
+caller immutability; hostile values and sanitized failures; and poisoned
+environment, configuration, database/repository, filesystem, artifact loading,
+model prediction/training, forecasting, RNG, network, inference, explainability,
+and API entry points.
+
+Phase 15 returns in-memory offline recommendation evidence only. It does not
+estimate costs, read realized future cost, consume material forecasts, load or
+run models, infer new risk, use regression outputs, estimate causal effects,
+schedule work, allocate crews/materials, solve multiple periods, persist or
+load recommendations, add or repurpose a PostgreSQL table, accept a
+repository/engine/config/path/seed, expose an API/dashboard, build containers,
+or perform any Phase 16+ behavior.

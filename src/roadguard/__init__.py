@@ -117,6 +117,17 @@ from roadguard.forecasting import (
     forecast_materials,
 )
 from roadguard.observations import generate_observations
+from roadguard.optimization import (
+    MAINTENANCE_OPTIMIZATION_CONTRACT_VERSION,
+    MAINTENANCE_OPTIMIZATION_USE_CASE,
+    MAX_EXACT_VND,
+    V1_OPTIMIZATION_CANDIDATE_COUNT,
+    MaintenanceCostInput,
+    MaintenanceOptimizationError,
+    MaintenanceOptimizationResult,
+    MaintenanceRecommendation,
+    optimize_maintenance,
+)
 from roadguard.preprocessing import (
     ChronologicalSplit,
     PreprocessingError,
@@ -199,6 +210,13 @@ __all__ = [
     "FeatureDefinition",
     "FeatureInputError",
     "LoadReport",
+    "MAINTENANCE_OPTIMIZATION_CONTRACT_VERSION",
+    "MAINTENANCE_OPTIMIZATION_USE_CASE",
+    "MAX_EXACT_VND",
+    "MaintenanceCostInput",
+    "MaintenanceOptimizationError",
+    "MaintenanceOptimizationResult",
+    "MaintenanceRecommendation",
     "INITIAL_TRAIN_MONTHS",
     "MATERIAL_FORECAST_CONTRACT_VERSION",
     "MaterialForecast",
@@ -231,6 +249,7 @@ __all__ = [
     "TestRegressionMetrics",
     "TransformedData",
     "V1Contract",
+    "V1_OPTIMIZATION_CANDIDATE_COUNT",
     "ValidationIssue",
     "ValidationReport",
     "__version__",
@@ -258,6 +277,7 @@ __all__ = [
     "month_transition",
     "monthly_hazard",
     "observation_dates",
+    "optimize_maintenance",
     "persist_selected_artifacts",
     "risk_score_from_probability",
     "render_data_card",
