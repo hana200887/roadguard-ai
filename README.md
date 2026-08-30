@@ -188,19 +188,19 @@ Phase 13 frozen selection, artifact publication, and risk mapping is published.
 It provides one private
 train/validation selection orchestration, exact train-fitted winner retention,
 atomic content-addressed local artifacts, canonical manifests, and target-free
-test risk rows. Model loading/registry, live inference, optimization,
-explainability, and all Phase 15+ work remain future phases.
+test risk rows. Model loading/registry, live inference, explainability, and all
+Phase 16+ work remain future phases.
 
 Phase 14 network-month material forecasting is published. It provides
 complete realized-history evidence, a separate expanding rolling-origin
 timeline, deterministic per-material selection, one frozen test pass, and
-four next-month forecast rows. Forecast persistence, maintenance optimization,
-inference, explainability, and all Phase 15+ work remain future phases.
+four next-month forecast rows. Forecast persistence, inference, explainability,
+and all Phase 16+ work remain future phases.
 
-The Phase 15 maintenance-prioritization contract is now frozen; implementation
-is underway. It defines an exact budget-only, single-date, offline
-evaluation over Phase 13 risk rows authenticated against a separately trusted
-manifest digest and explicit caller-asserted prospective cost-scenario values.
+Phase 15 exact maintenance prioritization is published. It provides an exact
+budget-only, single-date, offline evaluation over Phase 13 risk rows
+authenticated against a separately trusted manifest digest and explicit
+caller-asserted prospective cost-scenario values.
 Phase 15 does not authenticate cost provenance. Phase 14 forecasts are not
 treated as inventory constraints; fresh inference, persistence, serving, and
 all Phase 16+ work remain future.
