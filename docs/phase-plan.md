@@ -369,3 +369,62 @@ TDD evidence records genuine RED/GREEN results. Database forecast writes,
 segment forecasts, extra candidates, tuning, maintenance optimization,
 inference, explainability, API/dashboard, container, and all Phase 15+ work
 remain out of scope.
+
+## Phase 15 acceptance contract
+
+**Entry:** Phase 13 and Phase 14 are published. Phase 15 receives one exact
+in-memory Phase 13 `FrozenSelectionResult`, a separately supplied trusted
+expected manifest SHA-256 from the Phase 13 publication boundary, one complete
+tuple of caller-asserted prospective maintenance-cost scenario values, and one
+exact non-negative integer VND budget. It authenticates the complete Phase 13
+manifest and risk payload against that trust anchor before deriving the latest
+held-out risk date. Copying a digest from an untrusted supplied result is not
+authentication. Phase 15 neither loads a model nor produces fresh operational
+risk.
+
+**Output:** `roadguard.optimization.optimize_maintenance` returns immutable
+offline recommendation evidence for the single latest Phase 13 test snapshot.
+The exact API, schemas, objective, constraints, tie-breaks, provenance,
+validation, and failure rules are frozen in `docs/contracts.md` section 22.
+The result must identify itself as `OFFLINE_EVALUATION_ONLY`; selecting a
+segment means prioritizing it for human planning review, not executing or
+scheduling maintenance.
+
+**Optimization acceptance:** every snapshot segment has exactly one explicit
+positive prospective `cost_vnd` scenario value whose asserted
+`cost_as_of_date` is not after the risk evidence date. Phase 15 does not
+authenticate cost source, method, availability, freshness, or lineage. The
+only decision is select or defer one indivisible candidate. The exact
+lexicographic objective maximizes total selected integer
+risk score, then minimizes selected exact VND cost, then chooses the earliest
+segment ID at the first differing binary decision. The implementation proves
+the optimum with deterministic risk-indexed dynamic programming; greedy,
+approximate, time-limited, random, or best-effort fallbacks are forbidden.
+
+**Scientific boundary:** Phase 13 probabilities are not calibrated and risk
+scores are prioritization utilities, not failure probabilities, causal risk
+reduction, avoided losses, or monetary benefits. Phase 14 forecasts expected
+network consumption for the following month; they are neither inventory nor
+capacity and have no per-action material mapping. Phase 15 therefore does not
+consume them as constraints. Costs are explicit caller-asserted prospective
+scenario inputs and are never silently derived from later realized accounting
+cost.
+
+**Boundary acceptance:** exact public types, complete latest-date candidate
+coverage, full Phase 13 source authentication, probability/score/band
+consistency, exact integer and signed-64-bit VND rules, budget feasibility,
+known exact-optimum and greedy-counterexample vectors, exhaustive small-case
+oracles, all tie-breaks, empty optimum cases, 300-segment scale, canonical
+fingerprints and ordering, shuffled-cost equivalence, caller immutability,
+hostile values, sanitized errors, and environment/database/filesystem/model/
+forecast/RNG isolation are tested adversarially. The workflow is pure and
+in-memory and adds no dependency, configuration field, table, repository
+operation, or external I/O.
+
+**Exit:** all cross-phase gates pass, Phase 15 has independent correctness,
+optimality, temporal, provenance, numerical, security, and scope review
+approval, and its TDD evidence records genuine RED/GREEN results. Prospective
+cost estimation, material allocation, inventory/crew/geographic constraints,
+mandatory work, causal benefit, multi-period scheduling, persistence, fresh
+inference, artifact loading, explainability, API/dashboard, container, and all
+Phase 16+ behavior remain out of scope.
